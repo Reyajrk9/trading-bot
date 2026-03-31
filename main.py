@@ -4,8 +4,8 @@ import threading
 import random
 import os
 
-# 🔐 TOKEN (Railway env se lega)
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN", "8626210155:AAH914jJYsADPAU4ZuLK3gdaZiW611TAj5o")
+
 
 # 📢 Channel username
 CHANNEL_ID = "@rkniftysignals"

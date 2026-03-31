@@ -1,3 +1,6 @@
+import yfinance as yf
+import pandas as pd
+
 import telebot
 import time
 import threading
@@ -12,9 +15,34 @@ CHANNEL_ID = "@rkniftysignals"
 
 bot = telebot.TeleBot(TOKEN)
 
-# 🧠 Signal Generator (abhi demo, baad me real banayenge)
+def get_data():
+    data = yf.download("^NSEI", period="1d", interval="5m")
+    return data
+
 def generate_signal():
-    return random.choice(["BUY NIFTY 🔥", "SELL NIFTY ⚠️"])
+    df = get_data()
+    
+    df['EMA9'] = df['Close'].ewm(span=9).mean()
+    df['EMA21'] = df['Close'].ewm(span=21).mean()
+    
+    delta = df['Close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    
+    rs = avg_gain / avg_loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    last = df.iloc[-1]
+    
+    if last['EMA9'] > last['EMA21'] and last['RSI'] < 70:
+        return "BUY NIFTY 🔥"
+    elif last['EMA9'] < last['EMA21'] and last['RSI'] > 30:
+        return "SELL NIFTY ⚠️"
+    else:
+        return "NO TRADE ❌"
 
 # 🔁 Auto Signal Function
 def auto_signal():

@@ -5,6 +5,8 @@ TOKEN = "8626210155:AAH914jJYsADPAU4ZuLK3gdaZiW611TAj5o"
 
 bot = telebot.TeleBot(TOKEN)
 
+CHANNEL_ID = "@rkniftysignals"
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "🔥 Welcome to Trading Signal Bot!")

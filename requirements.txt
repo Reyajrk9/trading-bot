@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 yfinance
 pandas
+mplfinance
+beautifulsoup4

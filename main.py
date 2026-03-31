@@ -19,7 +19,43 @@ def get_data():
     data = yf.download("^NSEI", period="1d", interval="5m")
     return data
 
+def get_data():
+    try:
+        data = yf.download("^NSEI", period="1d", interval="5m")
+        return data
+    except:
+        return None
+
 def generate_signal():
+    df = get_data()
+    
+    if df is None or df.empty:
+        return "⚠️ Data not available"
+
+    try:
+        df['EMA9'] = df['Close'].ewm(span=9).mean()
+        df['EMA21'] = df['Close'].ewm(span=21).mean()
+        
+        delta = df['Close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        
+        avg_gain = gain.rolling(14).mean()
+        avg_loss = loss.rolling(14).mean()
+        
+        rs = avg_gain / avg_loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        last = df.iloc[-1]
+        
+        if last['EMA9'] > last['EMA21'] and last['RSI'] < 70:
+            return "BUY NIFTY 🔥"
+        elif last['EMA9'] < last['EMA21'] and last['RSI'] > 30:
+            return "SELL NIFTY ⚠️"
+        else:
+            return "NO TRADE ❌"
+    except:
+        return "⚠️ Calculation Error"
     df = get_data()
     
     df['EMA9'] = df['Close'].ewm(span=9).mean()
@@ -47,7 +83,7 @@ def generate_signal():
 # 🔁 Auto Signal Function
 def auto_signal():
     while True:
-        signal = generate_signal()
+        print("Generated Signal:", signal)
         text = f"📊 Auto Signal: {signal}"
         
         try:

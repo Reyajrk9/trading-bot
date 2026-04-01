@@ -1,57 +1,62 @@
 import telebot
 import os
 import time
+import yfinance as yf
+import pandas_ta as ta
 
-# Railway se variables uthayega
+# Railway Variables
 TOKEN = os.getenv('BOT_TOKEN')
 INDIAN_CH = os.getenv('CHANNEL_ID_INDIAN')
 GLOBAL_CH = os.getenv('CHANNEL_ID_GLOBAL')
 
 bot = telebot.TeleBot(TOKEN)
 
-def send_news_alert():
-    news_msg = (
-        "<b>📢 LIVE MARKET NEWS ALERT 📢</b>\n\n"
-        "📊 <b>Current Status:</b> High Volatility Detected!\n"
-        "⚠️ <b>Warning:</b> Badi news aane wali hai. Apne trades ko trailing SL ke sath secure karein.\n\n"
-        "✅ Stay Tuned for Next Update!"
-    )
-    try:
-        bot.send_message(INDIAN_CH, news_msg, parse_mode='HTML')
-        print("News Alert Sent! ✅")
-    except Exception as e:
-        print(f"News Error: {e}")
+# Aapka Permanent Quotex Link
+QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
 
-def send_global_promo():
-    msg = (
-        "<b>⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️</b>\n"
-        "<b>COMPOUNDING SESSION IS FREE</b>\n\n"
-        "📍 <b>REGISTRATION LINK</b> 👇\n"
-        "https://broker-qx.pro/?lid=2061690\n\n"
-        "🎁 <b>BONUS CODE:</b> <b>TT50</b>\n"
-        "Contact: <b>@Technical_suport1</b>"
-    )
+def get_market_data(symbol):
     try:
-        bot.send_message(GLOBAL_CH, msg, parse_mode='HTML')
-        print("Global Promo Sent! ✅")
-    except Exception as e:
-        print(f"Global Promo Error: {e}")
+        data = yf.download(tickers=symbol, period='1d', interval='1m', progress=False)
+        if not data.empty and len(data) > 14:
+            data['RSI'] = ta.rsi(data['Close'], length=14)
+            return data.iloc[-1]
+    except:
+        return None
+    return None
+
+def send_automated_signals():
+    # 1. Global/Binary Analysis (EUR/USD)
+    global_data = get_market_data("EURUSD=X")
+    if global_data is not None:
+        rsi = global_data['RSI']
+        if rsi > 70 or rsi < 30:
+            action = "🔴 PUT / SELL" if rsi > 70 else "🟢 CALL / BUY"
+            emoji = "📉" if rsi > 70 else "📈"
+            
+            msg = (
+                f"📊 **AI BINARY SIGNAL** {emoji}\n\n"
+                f"🪙 Asset: **EUR/USD**\n"
+                f"🚀 Action: **{action}**\n"
+                f"⚡ RSI Level: {round(rsi, 2)}\n"
+                f"⏱️ Timeframe: 1-5 Min\n\n"
+                f"🔗 **Trade Here:** [Open Quotex]({QUOTEX_LINK})\n"
+                f"🎁 Use Code: **TT50** for 50% Bonus!"
+            )
+            bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
+            print("Global Signal Sent! ✅")
+
+    # 2. Compounding & Promo (Har 30 min mein ek baar - Optional)
+    # Isko aap interval ke hisaab se customize kar sakte hain.
 
 if __name__ == "__main__":
-    print("RK Multi-Channel Bot Starting... 🚀")
-    
-    # Conflict khatam karne ke liye purane webhooks hatayein
-    bot.remove_webhook()
-    time.sleep(1)
-
-    # Bot start hote hi pehle messages bhej dega
-    send_news_alert()
-    send_global_promo()
+    print("RK Ultimate Automation Bot Starting... 🚀")
+    bot.remove_webhook() # Conflict Error (409) rokne ke liye
     
     while True:
         try:
-            # Interval badha diya hai taaki conflict na ho
-            bot.polling(none_stop=True, interval=15, timeout=60)
+            # Har 1 minute mein market scan karega
+            send_automated_signals()
+            time.sleep(60) 
         except Exception as e:
-            print(f"Polling Error: {e}")
+            print(f"Error: {e}")
             time.sleep(20)

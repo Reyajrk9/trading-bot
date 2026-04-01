@@ -5,7 +5,7 @@ import yfinance as yf
 import pandas_ta as ta
 import pandas as pd
 import threading
-from datetime import datetime
+from datetime import datetime, pytz
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv('BOT_TOKEN')
@@ -15,28 +15,33 @@ QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
 
 bot = telebot.TeleBot(TOKEN)
 
+# Last signal time tracker to avoid spam
+last_signal_times = {"EURUSD=X": 0, "^NSEI": 0}
+
+def is_indian_market_open():
+    tz = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(tz)
+    # Monday to Friday, 9:15 AM to 3:30 PM
+    if now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30):
+        return True
+    return False
+
 def get_market_analysis(symbol):
     try:
-        # 1-minute interval data for fast signals
         df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False, auto_adjust=True)
-        if df is None or df.empty or len(df) < 20: 
-            return None
+        if df is None or df.empty or len(df) < 20: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
-        if isinstance(df.columns, pd.MultiIndex): 
-            df.columns = df.columns.get_level_values(0)
-        
-        # Technical Indicators
         df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA_20'] = ta.ema(df['Close'], length=20)
         df = df.dropna()
         return df if not df.empty else None
     except Exception as e:
-        print(f"❌ Data Fetch Error ({symbol}): {e}")
+        print(f"❌ Fetch Error ({symbol}): {e}")
         return None
 
 def check_result_and_post(symbol, chat_id, entry_price, signal_type, signal_msg_id):
-    # Wait 2 minutes for trade expiry
-    time.sleep(120) 
+    # Wait 2 minutes (120s) + 5s buffer for candle close
+    time.sleep(125) 
     analysis = get_market_analysis(symbol)
     
     if analysis is not None:
@@ -47,31 +52,37 @@ def check_result_and_post(symbol, chat_id, entry_price, signal_type, signal_msg_
         elif "PUT" in signal_type and current_price < entry_price: is_win = True
         
         result_emoji = "✅ SUCCESS (ITM) 💰" if is_win else "❌ LOSS (OTM) 📉"
-        result_status = "PROFIT" if is_win else "RECOVERY NEEDED"
-
+        
         result_text = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **TRADE RESULT: {symbol}**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏁 **Status:** {result_emoji}\n"
-            f"📍 **Entry:** {round(entry_price, 5)}\n"
-            f"🔚 **Close:** {round(current_price, 5)}\n"
-            f"📢 **Signal:** {result_status}\n"
+            f"🏁 Status: **{result_emoji}**\n"
+            f"📍 Entry: {round(entry_price, 5)}\n"
+            f"🔚 Close: {round(current_price, 5)}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🚀 **Next Signal Joining:** [Click Here]({QUOTEX_LINK})"
+            f"🔥 **Next signal?** [Join VIP Now]({QUOTEX_LINK})"
         )
         try:
             bot.send_message(chat_id, result_text, reply_to_message_id=signal_msg_id, parse_mode='Markdown')
         except Exception as e:
-            print(f"Result Posting Error: {e}")
+            print(f"Result Error: {e}")
 
 def send_signals():
-    # Symbols list
-    targets = [("EURUSD=X", GLOBAL_CH, "FOREX GLOBAL"), ("^NSEI", INDIAN_CH, "NIFTY 50 INDEX")]
+    global last_signal_times
+    targets = [("EURUSD=X", GLOBAL_CH, "FOREX GLOBAL"), ("^NSEI", INDIAN_CH, "NIFTY 50")]
     
     for symbol, chat_id, label in targets:
-        if not chat_id: continue # Skip if ID is missing in Railway
+        if not chat_id: continue
         
+        # Nifty timing check
+        if symbol == "^NSEI" and not is_indian_market_open():
+            continue
+
+        # Spam check: 5 minute gap (300 seconds)
+        if time.time() - last_signal_times[symbol] < 300:
+            continue
+
         df = get_market_analysis(symbol)
         if df is not None:
             analysis = df.iloc[-1]
@@ -79,13 +90,11 @@ def send_signals():
             rsi = float(analysis['RSI'])
             
             sig_type = None
-            # Professional RSI Strategy
-            if rsi < 30: 
-                sig_type = "CALL 📈 (BUY)"
-            elif rsi > 70: 
-                sig_type = "PUT 📉 (SELL)"
+            if rsi < 28: sig_type = "CALL 📈 (BUY)"
+            elif rsi > 72: sig_type = "PUT 📉 (SELL)"
             
             if sig_type:
+                last_signal_times[symbol] = time.time() # Update last signal time
                 msg_text = (
                     f"🔔 **RK TRADING ALERT: {label}**\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -95,27 +104,24 @@ def send_signals():
                     f"⏳ **Duration:** 2 MIN\n"
                     f"📊 **Market RSI:** {round(rsi, 2)}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔗 [TRADE ON QUOTEX NOW]({QUOTEX_LINK})\n"
-                    f"⚠️ *Wait for the next candle to start!*"
+                    f"🔗 [TRADE ON QUOTEX]({QUOTEX_LINK})\n"
+                    f"⚠️ *Wait for current candle close!*"
                 )
                 try:
                     sent_msg = bot.send_message(chat_id, msg_text, parse_mode='Markdown', disable_web_page_preview=True)
-                    print(f"✅ {label} Signal Sent at {datetime.now().strftime('%H:%M:%S')}")
+                    print(f"✅ {label} Signal Sent!")
                     
-                    # Result Thread
                     threading.Thread(target=check_result_and_post, args=(symbol, chat_id, price, sig_type, sent_msg.message_id)).start()
                 except Exception as e:
-                    print(f"Signal Send Error: {e}")
+                    print(f"Send Error: {e}")
 
 if __name__ == "__main__":
-    print("🚀 RK Result-Tracking Bot is Starting...")
+    print("🚀 RK Professional Trading Bot Active...")
     bot.remove_webhook()
-    
     while True:
         try:
-            # Check for signals every 60 seconds
             send_signals()
-            time.sleep(60)
+            time.sleep(30) # Scan every 30 seconds
         except Exception as e:
-            print(f"⚠️ Main Loop Error: {e}")
-            time.sleep(30)
+            print(f"Loop Error: {e}")
+            time.sleep(20)

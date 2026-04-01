@@ -1,4 +1,4 @@
-pytelebotapi
+pyTelegramBotAPI
 yfinance
 pandas
 pandas_ta

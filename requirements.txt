@@ -1,4 +1,5 @@
-pyTelegramBotAPI
+pytelebotapi
 yfinance
-pandas-ta
 pandas
+pandas_ta
+pytz

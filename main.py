@@ -5,7 +5,8 @@ import yfinance as yf
 import pandas_ta as ta
 import pandas as pd
 import threading
-from datetime import datetime, pytz
+import pytz  # ALAG SE IMPORT KIYA HAI
+from datetime import datetime
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv('BOT_TOKEN')
@@ -19,12 +20,15 @@ bot = telebot.TeleBot(TOKEN)
 last_signal_times = {"EURUSD=X": 0, "^NSEI": 0}
 
 def is_indian_market_open():
-    tz = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(tz)
-    # Monday to Friday, 9:15 AM to 3:30 PM
-    if now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30):
-        return True
-    return False
+    try:
+        tz = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(tz)
+        # Monday to Friday, 9:15 AM to 3:30 PM
+        if now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30):
+            return True
+        return False
+    except:
+        return False
 
 def get_market_analysis(symbol):
     try:
@@ -40,7 +44,6 @@ def get_market_analysis(symbol):
         return None
 
 def check_result_and_post(symbol, chat_id, entry_price, signal_type, signal_msg_id):
-    # Wait 2 minutes (120s) + 5s buffer for candle close
     time.sleep(125) 
     analysis = get_market_analysis(symbol)
     
@@ -73,13 +76,12 @@ def send_signals():
     targets = [("EURUSD=X", GLOBAL_CH, "FOREX GLOBAL"), ("^NSEI", INDIAN_CH, "NIFTY 50")]
     
     for symbol, chat_id, label in targets:
-        if not chat_id: continue
+        if not chat_id or chat_id == "None": continue
         
-        # Nifty timing check
         if symbol == "^NSEI" and not is_indian_market_open():
             continue
 
-        # Spam check: 5 minute gap (300 seconds)
+        # 5 minute gap
         if time.time() - last_signal_times[symbol] < 300:
             continue
 
@@ -94,7 +96,7 @@ def send_signals():
             elif rsi > 72: sig_type = "PUT 📉 (SELL)"
             
             if sig_type:
-                last_signal_times[symbol] = time.time() # Update last signal time
+                last_signal_times[symbol] = time.time()
                 msg_text = (
                     f"🔔 **RK TRADING ALERT: {label}**\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -109,8 +111,6 @@ def send_signals():
                 )
                 try:
                     sent_msg = bot.send_message(chat_id, msg_text, parse_mode='Markdown', disable_web_page_preview=True)
-                    print(f"✅ {label} Signal Sent!")
-                    
                     threading.Thread(target=check_result_and_post, args=(symbol, chat_id, price, sig_type, sent_msg.message_id)).start()
                 except Exception as e:
                     print(f"Send Error: {e}")
@@ -121,7 +121,7 @@ if __name__ == "__main__":
     while True:
         try:
             send_signals()
-            time.sleep(30) # Scan every 30 seconds
+            time.sleep(30)
         except Exception as e:
             print(f"Loop Error: {e}")
             time.sleep(20)

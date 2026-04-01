@@ -1,66 +1,77 @@
-import yfinance as yf
 import telebot
 import os
 import time
-import threading
 from datetime import datetime
 
-# Configuration
-TOKEN = os.getenv("BOT_TOKEN", "8626210155:AAH914jJYsADPAU4ZuLK3gdaZiW611TAj5o")
-CH_INDIAN = os.getenv("CHANNEL_ID_INDIAN", "@RK_Nifty_Signals_VIP")
-CH_GLOBAL = os.getenv("CHANNEL_ID_GLOBAL", "@RK_Binary_Forex_Global")
+# Railway Variables se data uthayega
+TOKEN = os.getenv('BOT_TOKEN')
+INDIAN_CH = os.getenv('CHANNEL_ID_INDIAN')
+GLOBAL_CH = os.getenv('CHANNEL_ID_GLOBAL')
 
 bot = telebot.TeleBot(TOKEN)
 
-def get_signal(symbol, name, is_binary=False):
+# --- 1. NEWS ALERT SYSTEM ---
+def send_news_alert():
+    """Market News Alert bhejta hai"""
+    news_msg = (
+        "📢 **LIVE MARKET NEWS ALERT** 📢\n\n"
+        "📊 **Current Status:** High Volatility Detected!\n"
+        "⚠️ **Warning:** Badi news aane wali hai. Apne trades ko trailing SL ke sath secure karein.\n\n"
+        "💡 **Expert Tip:** Nifty aur Global markets mein sharp move aa sakta hai. Risk management ka dhyan rakhein.\n\n"
+        "✅ Stay Tuned for Next Update!"
+    )
     try:
-        df = yf.download(symbol, period="1d", interval="5m", progress=False)
-        if df.empty: return None
-        
-        close = df['Close']
-        price = float(close.iloc[-1].item())
-        ema9 = close.ewm(span=9).mean().iloc[-1]
-        ema21 = close.ewm(span=21).mean().iloc[-1]
-        
-        if ema9 > ema21:
-            action = "CALL 🟢" if is_binary else "BUY 🔥"
-            return f"📊 **{name} SIGNAL**\n\nAction: {action}\nEntry: {price:.2f}\nSL: {price-40:.2f}\nTarget: {price+80:.2f}"
-        elif ema9 < ema21:
-            action = "PUT 🔴" if is_binary else "SELL ⚠️"
-            return f"📊 **{name} SIGNAL**\n\nAction: {action}\nEntry: {price:.2f}\nSL: {price+40:.2f}\nTarget: {price-80:.2f}"
-    except:
-        return None
-    return None
+        bot.send_message(INDIAN_CH, news_msg, parse_mode='Markdown')
+        print("News Alert Sent to Indian Channel! ✅")
+    except Exception as e:
+        print(f"News Error: {e}")
 
-def auto_loop():
-    while True:
-        now = datetime.now()
-        hr = now.hour
-        
-        try:
-            # Indian Market (Morning/Afternoon)
-            if 9 <= hr <= 15:
-                for s, n in [("^NSEI", "NIFTY"), ("^NSEBANK", "BANKNIFTY")]:
-                    sig = get_signal(s, n)
-                    if sig: bot.send_message(CH_INDIAN, sig, parse_mode="Markdown")
-            
-            # Global/Binary (Evening/Night/Weekend)
-            if hr >= 16 or hr < 9 or now.weekday() >= 5:
-                for s, n in [("EURUSD=X", "EUR/USD"), ("BTC-USD", "BITCOIN")]:
-                    sig = get_signal(s, n, is_binary=True)
-                    if sig: bot.send_message(CH_GLOBAL, f"💎 **VIP SESSION**\n\n{sig}", parse_mode="Markdown")
-            
-            # Promo Messages (Every 2 Hours)
-            if now.minute == 0 and hr % 2 == 0:
-                bot.send_message(CH_INDIAN, "💰 **Join Paid VIP for 95% Accuracy!**\nMessage: @Admin")
-                bot.send_message(CH_GLOBAL, "🎁 **FREE VIP ACCESS**\nRegister: [YOUR_LINK]\nDeposit $50 & Send ID!")
+# --- 2. PROMOTION SYSTEM (As per your Style) ---
+def send_global_promo():
+    """Quotex Style Promo"""
+    msg = (
+        "⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️⬆️\n"
+        "**COMPOUNDING SESSION IS FREE JUST**\n"
+        "**CREATE A NEW ACCOUNT WITH MY**\n"
+        "**LINK AND DIPOSIT 100%** 💰\n\n"
+        "📢 **WANT TO JOIN 50$ TO 2500$**\n"
+        "**COMPOUNDING SESSION** 📈📈\n\n"
+        "🚨 **JOIN FAST LIMITED SEATS** 🪑\n\n"
+        "📍 **CREATE A NEW ACCOUNT** 👇\n\n"
+        "https://broker-qx.pro/?lid=2061690\n" # Tumhara real link
+        "https://broker-qx.pro/?lid=2061690\n\n"
+        "🎁 **BONUS CODE** 👇 **TT50** 🎁\n\n"
+        "📍 **DIPOSIT MINIMUM 50$ AND SEND**\n"
+        "**ME TRADER ID** ⚡️🔮\n"
+        "@Technical_suport1"
+    )
+    try:
+        bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown')
+        print("Global Promo Sent! ✅")
+    except Exception as e:
+        print(f"Global Promo Error: {e}")
 
-        except Exception as e:
-            print(f"Loop Error: {e}")
-        
-        time.sleep(300) # Check every 5 mins
+# --- MAIN LOGIC ---
+print("RK Multi-Channel Bot is Starting... 🚀")
 
 if __name__ == "__main__":
-    print("RK Multi-Channel Bot is Live! 🚀")
-    threading.Thread(target=auto_loop, daemon=True).start()
-    bot.infinity_polling()
+    # Bot start hote hi turant 1st update bhejega
+    send_news_alert()
+    send_global_promo()
+    
+    print("Bot is Live and Monitoring... ⚡")
+    
+    while True:
+        try:
+            # Conflict fix: interval=5 aur timeout=30 rakha hai
+            bot.polling(none_stop=True, interval=5, timeout=30)
+            
+            # Har 2 ghante (7200 sec) mein News aur Ads automatic repeat honge
+            time.sleep(7200)
+            send_news_alert()
+            send_global_promo()
+            
+        except Exception as e:
+            # Agar network break ho toh 15 sec wait karke restart karega
+            print(f"Restarting due to Error: {e}")
+            time.sleep(15)

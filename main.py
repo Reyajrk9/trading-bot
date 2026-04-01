@@ -4,80 +4,96 @@ import time
 import yfinance as yf
 import pandas_ta as ta
 
-# Railway Variables
+# Railway Environment Variables
 TOKEN = os.getenv('BOT_TOKEN')
 INDIAN_CH = os.getenv('CHANNEL_ID_INDIAN')
 GLOBAL_CH = os.getenv('CHANNEL_ID_GLOBAL')
 
 bot = telebot.TeleBot(TOKEN)
+
+# Aapka Business Link
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
+PROMO_CODE = "TT50"
 
-def get_market_analysis(symbol):
+def calculate_signals(symbol, is_indian=False):
     try:
-        # 1-minute data fetch kar rahe hain
+        # 1-minute data fetch (Accuracy ke liye 1m best hai)
         data = yf.download(tickers=symbol, period='1d', interval='1m', progress=False)
-        if data is not None and not data.empty and len(data) > 20:
-            # Indicators calculate karna
-            data['RSI'] = ta.rsi(data['Close'], length=14)
-            data['EMA_20'] = ta.ema(data['Close'], length=20)
-            return data.iloc[-1]
-    except Exception as e:
-        print(f"Analysis Error: {e}")
-    return None
-
-def send_pro_signals():
-    symbol = "EURUSD=X"
-    analysis = get_market_analysis(symbol)
-    
-    if analysis is not None:
-        try:
-            current_rsi = float(analysis['RSI'].item())
-            current_price = float(analysis['Close'].item())
-            ema_20 = float(analysis['EMA_20'].item())
-        except:
-            current_rsi = float(analysis['RSI'])
-            current_price = float(analysis['Close'])
-            ema_20 = float(analysis['EMA_20'])
-
-        # --- LOGIC: RSI + EMA DOUBLE CONFIRMATION ---
-        signal_type = None
+        if data is None or data.empty or len(data) < 25:
+            return None
         
-        # SELL Signal: RSI > 70 aur Price EMA se niche girna shuru ho
-        if current_rsi > 70 and current_price < ema_20:
-            signal_type = "PUT"
-            emoji = "🔴"
-            action = "SELL / DOWN"
-            
-        # BUY Signal: RSI < 30 aur Price EMA ke upar nikalna shuru ho
-        elif current_rsi < 30 and current_price > ema_20:
-            signal_type = "CALL"
-            emoji = "🟢"
-            action = "BUY / UP"
+        # Indicators: RSI(14) + EMA(20)
+        data['RSI'] = ta.rsi(data['Close'], length=14)
+        data['EMA_20'] = ta.ema(data['Close'], length=20)
+        
+        last_row = data.iloc[-1]
+        # Fixed: .item() for Series to Float
+        price = float(last_row['Close'].item() if hasattr(last_row['Close'], 'item') else last_row['Close'])
+        rsi = float(last_row['RSI'].item() if hasattr(last_row['RSI'], 'item') else last_row['RSI'])
+        ema = float(last_row['EMA_20'].item() if hasattr(last_row['EMA_20'], 'item') else last_row['EMA_20'])
 
-        if signal_type:
-            msg = (
-                f"🔥 **PRO AI SIGNAL: {signal_type}** 🔥\n\n"
-                f"🪙 Asset: **EUR/USD**\n"
-                f"🚀 Action: **{action}** {emoji}\n"
-                f"📊 Strategy: **EMA + RSI (90% Acc.)**\n"
-                f"⚡ RSI Level: {round(current_rsi, 2)}\n"
-                f"⏱️ Expiry: **2-5 Minutes**\n\n"
-                f"🔗 **Direct Trade Link:**\n[OPEN QUOTEX ACCOUNT]({QUOTEX_LINK})\n\n"
-                f"🎁 Use Code: **TT50** for Deposit Bonus!\n"
-                f"⚠️ *Risk 2% of your wallet only.*"
-            )
-            bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
-            print(f"Pro Signal Sent! ✅ ({signal_type})")
+        # --- SIGNAL LOGIC (Double Confirmation) ---
+        signal = None
+        # CALL: RSI < 30 (Oversold) aur Price EMA ke upar (Trend Reversal)
+        if rsi < 30 and price > ema:
+            sl = price - (price * 0.002) # 0.2% SL
+            tp1 = price + (price * 0.004) # 0.4% Target
+            signal = {"type": "CALL 📈", "entry": price, "sl": sl, "tp": tp1, "rsi": rsi}
+            
+        # PUT: RSI > 70 (Overbought) aur Price EMA ke niche (Trend Exhaustion)
+        elif rsi > 70 and price < ema:
+            sl = price + (price * 0.002)
+            tp1 = price - (price * 0.004)
+            signal = {"type": "PUT 📉", "entry": price, "sl": sl, "tp": tp1, "rsi": rsi}
+
+        return signal
+    except Exception as e:
+        print(f"Error analyzing {symbol}: {e}")
+        return None
+
+def send_to_telegram():
+    # 1. GLOBAL (EUR/USD)
+    global_sig = calculate_signals("EURUSD=X")
+    if global_sig:
+        msg = (
+            f"🌍 **GLOBAL BINARY SIGNAL**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🪙 Asset: **EUR/USD**\n"
+            f"🚀 Action: **{global_sig['type']}**\n"
+            f"💰 Entry: {round(global_sig['entry'], 5)}\n"
+            f"🚫 SL: {round(global_sig['sl'], 5)}\n"
+            f"🎯 Target: {round(global_sig['tp'], 5)}\n"
+            f"⚡ RSI: {round(global_sig['rsi'], 2)}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 **Trade Now:** [OPEN QUOTEX]({QUOTEX_LINK})\n"
+            f"🎁 Bonus Code: **{PROMO_CODE}** (50% Deposit)"
+        )
+        bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
+
+    # 2. INDIAN (NIFTY 50)
+    indian_sig = calculate_signals("^NSEI", is_indian=True)
+    if indian_sig:
+        msg_in = (
+            f"🇮🇳 **INDIAN MARKET ALERT**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 Index: **NIFTY 50**\n"
+            f"🚀 Signal: **{indian_sig['type']}**\n"
+            f"📍 Entry: {round(indian_sig['entry'], 2)}\n"
+            f"🛑 SL: {round(indian_sig['sl'], 2)}\n"
+            f"✅ Target: {round(indian_sig['tp'], 2)}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚠️ *Trading involves risk. Use proper lot size.*"
+        )
+        bot.send_message(INDIAN_CH, msg_in, parse_mode='Markdown')
 
 if __name__ == "__main__":
-    print("RK Pro-Trading Bot Live... 🚀")
-    bot.remove_webhook()
+    print("RK Ultimate Combined Bot Live... 🚀")
+    bot.remove_webhook() # Conflict fix
     
     while True:
         try:
-            send_pro_signals()
-            # 1 minute wait taaki har candle check ho
-            time.sleep(60) 
+            send_to_telegram()
+            time.sleep(60) # Har minute check karega
         except Exception as e:
-            print(f"System Error: {e}")
+            print(f"System Loop Error: {e}")
             time.sleep(20)

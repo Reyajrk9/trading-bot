@@ -2,4 +2,3 @@ pyTelegramBotAPI
 yfinance
 pandas
 pandas_ta
-pytz

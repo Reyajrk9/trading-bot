@@ -93,7 +93,7 @@ def main_engine():
                     msg = (f"💎 **RK PREMIUM ALERT: {label}** 💎\n🚦 ACTION: {sig}\n🎯 ENTRY: {price}\n⏳ TIME: 2 MINUTE")
                     sent = bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
                     threading.Thread(target=result_tracker, args=(sym, price, sig, sent.message_id)).start()
-        time.sleep(40)
+        time.sleep(120)
 
 if __name__ == "__main__":
     print("🚀 Bot starting...")

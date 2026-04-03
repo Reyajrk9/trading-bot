@@ -19,10 +19,10 @@ bot = telebot.TeleBot(TOKEN)
 last_signal_times = {}
 session_active = False
 
-# --- FIXED ENGINE ---
+# --- ANALYSIS ENGINE ---
 def get_institutional_signal(symbol):
     try:
-        # Stable method for Railway
+        # Fetching data using yfinance
         df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False, auto_adjust=True)
         
         if df is None or df.empty or len(df) < 15:
@@ -35,7 +35,9 @@ def get_institutional_signal(symbol):
         df['EMA_200'] = ta.ema(df['Close'], length=200)
         
         curr = df.iloc[-1]
-        price, rsi, ema = float(curr['Close']), float(curr['RSI']), float(curr['EMA_200'])
+        price = float(curr['Close'])
+        rsi = float(curr['RSI'])
+        ema = float(curr['EMA_200'])
         
         sig, reason = None, ""
         if price > ema and rsi < 30:
@@ -51,7 +53,7 @@ def is_indian_market_open():
     now = datetime.now(IST)
     return (now.weekday() < 5) and (9, 15) <= (now.hour, now.minute) <= (15, 30)
 
-# --- TRACKER ---
+# --- RESULT TRACKER ---
 def result_tracker(symbol, entry_p, sig_t, msg_id):
     time.sleep(125)
     try:
@@ -71,10 +73,10 @@ def admin_cmd(message):
     global session_active
     if int(message.from_user.id) != ADMIN_ID: return
     if '/prealert' in message.text:
-        bot.send_message(GLOBAL_CH, f"🔥 **SESSION LOADING** 🔥\n👉 [JOIN NOW]({QUOTEX_LINK})")
+        bot.send_message(GLOBAL_CH, f"🔥 **RK PREMIUM SESSION LOADING** 🔥\n━━━━━━━━━━━━━━\n👉 [JOIN NOW]({QUOTEX_LINK})")
     elif '/sessionstart' in message.text:
         session_active = True
-        bot.send_message(GLOBAL_CH, "🚀 **SESSION LIVE! SCANNING...**")
+        bot.send_message(GLOBAL_CH, "🚀 **SESSION LIVE! SCANNING MARKETS...**")
     elif '/stop' in message.text:
         session_active = False
         bot.send_message(GLOBAL_CH, "🛑 **SESSION ENDED.**")
@@ -95,7 +97,7 @@ def main_engine():
                 sig, price, reason = get_institutional_signal(sym)
                 if sig:
                     last_signal_times[sym] = time.time()
-                    bot.send_message(GLOBAL_CH, f"⏳ **RK ANALYZING {label}...**")
+                    bot.send_message(GLOBAL_CH, f"⏳ **RK ANALYZING {label}...** Stay Ready!")
                     time.sleep(5)
                     msg = (f"💎 **RK PREMIUM SIGNAL** 💎\n━━━━━━━━━━━━━━\n🌍 **ASSET:** {label}\n🚦 **ACTION:** {sig}\n🎯 **ENTRY:** {price}\n⏳ **TIME:** 2 MINUTE\n━━━━━━━━━━━━━━")
                     sent = bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
@@ -104,5 +106,6 @@ def main_engine():
 
 if __name__ == "__main__":
     bot.remove_webhook()
+    # Start the analysis engine in a background thread
     threading.Thread(target=main_engine, daemon=True).start()
     bot.infinity_polling()

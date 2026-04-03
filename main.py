@@ -22,9 +22,8 @@ session_active = False
 # --- FIXED ENGINE ---
 def get_institutional_signal(symbol):
     try:
-        # Ticker method for better stability
-        tk = yf.Ticker(symbol)
-        df = tk.history(period='1d', interval='1m')
+        # Stable method for Railway
+        df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False, auto_adjust=True)
         
         if df is None or df.empty or len(df) < 15:
             return None, None, None
@@ -56,8 +55,7 @@ def is_indian_market_open():
 def result_tracker(symbol, entry_p, sig_t, msg_id):
     time.sleep(125)
     try:
-        tk = yf.Ticker(symbol)
-        df = tk.history(period='1d', interval='1m')
+        df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False)
         if not df.empty:
             cp = float(df['Close'].iloc[-1])
             win = (cp > entry_p if "CALL" in sig_t else cp < entry_p)
@@ -68,15 +66,18 @@ def result_tracker(symbol, entry_p, sig_t, msg_id):
     except: pass
 
 # --- COMMANDS ---
-@bot.message_handler(commands=['prealert', 'sessionstart'])
+@bot.message_handler(commands=['prealert', 'sessionstart', 'stop'])
 def admin_cmd(message):
     global session_active
     if int(message.from_user.id) != ADMIN_ID: return
     if '/prealert' in message.text:
-        bot.send_message(GLOBAL_CH, f"🔥 **SESSION LOADING** 🔥\n👉 [JOIN]({QUOTEX_LINK})")
+        bot.send_message(GLOBAL_CH, f"🔥 **SESSION LOADING** 🔥\n👉 [JOIN NOW]({QUOTEX_LINK})")
     elif '/sessionstart' in message.text:
         session_active = True
         bot.send_message(GLOBAL_CH, "🚀 **SESSION LIVE! SCANNING...**")
+    elif '/stop' in message.text:
+        session_active = False
+        bot.send_message(GLOBAL_CH, "🛑 **SESSION ENDED.**")
 
 def main_engine():
     global last_signal_times, session_active
@@ -94,11 +95,11 @@ def main_engine():
                 sig, price, reason = get_institutional_signal(sym)
                 if sig:
                     last_signal_times[sym] = time.time()
-                    bot.send_message(GLOBAL_CH, f"⏳ **ANALYZING {label}...**")
+                    bot.send_message(GLOBAL_CH, f"⏳ **RK ANALYZING {label}...**")
                     time.sleep(5)
                     msg = (f"💎 **RK PREMIUM SIGNAL** 💎\n━━━━━━━━━━━━━━\n🌍 **ASSET:** {label}\n🚦 **ACTION:** {sig}\n🎯 **ENTRY:** {price}\n⏳ **TIME:** 2 MINUTE\n━━━━━━━━━━━━━━")
                     sent = bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
-                    threading.Thread(target=result_tracker, args=(sym, price, sig, sent.message_id)).start()
+                    threading.Thread(target=result_tracker, args=(sym, price, sig, sent.message_id), daemon=True).start()
         time.sleep(180)
 
 if __name__ == "__main__":

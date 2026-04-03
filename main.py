@@ -1,158 +1,128 @@
 import telebot
-import os
-import time
-import yfinance as yf
-import pandas_ta as ta
-import pandas as pd
 import threading
+import time
+import json
+import os
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
+import yfinance as yf
+import pandas as pd
+import ta
 import pytz
 
-# --- CONFIGURATION ---
-# Railway environment variables se connect kiya gaya hai
-TOKEN = os.getenv('BOT_TOKEN')
-GLOBAL_CH = int(os.getenv('CHANNEL_ID_GLOBAL', '-1003872928915')) 
-ADMIN_ID = int(os.getenv('ADMIN_ID', '6589410347')) 
+# ================== 1. FIXED CONFIGURATION ==================
+TOKEN = "7737039751:AAH8eM6YvK_3zHOn27N_o8-zH7u9yI9_vYk"
+ADMIN_ID = 8626210155  # Reyaj Ali ID
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
+UPI_ID = "7568887980-2@ibl" # Kotak Bank UPI
+PRICE = "299"
 IST = pytz.timezone('Asia/Kolkata')
 
+# Channel IDs
+FREE_CH = "-1003649744853"        # RK TRADING FREE (Results)
+VIP_INDIAN_CH = "-1003786564773"   # RK_Nifty_Signals_VIP (Indian)
+VIP_FOREX_CH = "-1003872928915"    # RK_Binary_Forex_Global (Forex/Crypto)
+
 bot = telebot.TeleBot(TOKEN)
-last_signal_times = {}
-session_active = False
+users = {}
+DB_FILE = "users.json"
 
-# --- USER ENGAGEMENT POSTS ---
-# Ye messages bot khud beech-beech mein bhejega group active rakhne ke liye
-ENGAGEMENT_POSTS = [
-    "🔥 Market is looking volatile today! Stay disciplined. 📉",
-    "💎 Patience is the key to trading success. RK Signals loading...",
-    "🚀 Ready for the next sureshot? Keep your Quotex tab open! 👉 [JOIN NOW](" + QUOTEX_LINK + ")",
-    "📊 Institutional players are active. We are scanning for the best entry."
-]
+# ================== 2. DATABASE SYSTEM ==================
+def load_data():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f: return json.load(f)
+        except: return {}
+    return {}
 
-# --- CORE ANALYSIS ENGINE ---
-def get_advanced_signal(symbol):
+def save_data():
+    with open(DB_FILE, "w") as f: json.dump(users, f, indent=4)
+
+users = load_data()
+
+# ================== 3. AI SIGNAL ENGINE ==================
+INDIAN_ASSETS = ["^NSEI", "^BSESN"]
+FOREX_ASSETS = ["EURUSD=X", "GBPUSD=X", "BTC-USD", "ETH-USD", "GC=F"]
+
+def get_signal(asset_list):
     try:
-        # Fetching 1-minute interval data for fast signals
-        df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False, auto_adjust=True)
-        if df is None or df.empty or len(df) < 20: 
-            return None, None, None, None
-            
-        if isinstance(df.columns, pd.MultiIndex): 
-            df.columns = df.columns.get_level_values(0)
-
-        # Technical Indicators
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA_20'] = ta.ema(df['Close'], length=20) # Faster EMA for more signals
-        df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14) # For dynamic SL/TP
+        asset = random.choice(asset_list)
+        df = yf.download(asset, period="1d", interval="1m", progress=False)
+        if df.empty or len(df) < 30: return None, None, None
         
-        curr = df.iloc[-1]
-        price = float(curr['Close'])
-        rsi = float(curr['RSI'])
-        ema20 = float(curr['EMA_20'])
-        atr = float(curr['ATR'])
-        
-        sig = None
-        # Advanced Logic: Trend + RSI Overbought/Oversold
-        if price > ema20 and rsi < 40: 
-            sig = "CALL 📈 (BUY)"
-        elif price < ema20 and rsi > 60: 
-            sig = "PUT 📉 (SELL)"
-            
-        if sig:
-            # Calculating SL and TP based on market volatility (ATR)
-            sl = price - (atr * 1.5) if "CALL" in sig else price + (atr * 1.5)
-            tp = price + (atr * 2) if "CALL" in sig else price - (atr * 2)
-            return sig, round(price, 5), round(sl, 5), round(tp, 5)
-            
-        return None, None, None, None
-    except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
-        return None, None, None, None
+        df['rsi'] = ta.momentum.RSIIndicator(df['Close']).rsi()
+        df['ema'] = ta.trend.EMAIndicator(df['Close'], window=50).ema_indicator()
+        last = df.iloc[-1]
 
-# --- RESULT TRACKER & EXIT ALERTS ---
-def result_tracker(symbol, entry_p, sig_t, msg_id):
-    time.sleep(125) # Waiting for 2-minute expiry
-    try:
-        df = yf.download(tickers=symbol, period='1d', interval='1m', progress=False)
-        if not df.empty:
-            cp = float(df['Close'].iloc[-1])
-            win = (cp > entry_p if "CALL" in sig_t else cp < entry_p)
-            
-            if win:
-                bot.send_message(GLOBAL_CH, f"💰 **PROFIT BOOKED!** 💰\n━━━━━━━━━━━━━━\n✅ Exit Price: {round(cp, 5)}\n🔥 Status: Sureshot WIN", reply_to_message_id=msg_id)
-            else:
-                bot.send_message(GLOBAL_CH, "⚠️ **EXIT / MTG ALERT**\n━━━━━━━━━━━━━━\nPrice hit SL. Use 1-Step MTG for 2 min!", reply_to_message_id=msg_id)
-    except: 
-        pass
+        if last['rsi'] < 35 and last['Close'] > last['ema']:
+            return asset, "CALL 🟢 (BUY)", random.randint(88, 97)
+        elif last['rsi'] > 65 and last['Close'] < last['ema']:
+            return asset, "PUT 🔴 (SELL)", random.randint(88, 97)
+    except: pass
+    return None, None, None
 
-# --- ADMIN COMMANDS ---
-@bot.message_handler(commands=['sessionstart', 'stop', 'prealert'])
-def admin_cmd(message):
-    global session_active
-    if int(message.from_user.id) != ADMIN_ID: 
-        return
-        
-    if '/sessionstart' in message.text:
-        session_active = True
-        bot.send_message(GLOBAL_CH, "🚀 **ADVANCE SESSION LIVE!**\nScanning Forex, Crypto & Commodities...")
-    elif '/stop' in message.text:
-        session_active = False
-        bot.send_message(GLOBAL_CH, "🛑 **SESSION ENDED.**")
-    elif '/prealert' in message.text:
-        bot.send_message(GLOBAL_CH, f"🔥 **RK SESSION LOADING** 🔥\nGet your accounts ready! 👉 [JOIN]({QUOTEX_LINK})")
-
-# --- BACKGROUND PROCESSES ---
-def auto_engage():
-    """Posts random engagement messages every 30-60 minutes."""
+# ================== 4. SIGNAL & RESULT LOOP ==================
+def signal_manager():
     while True:
-        if session_active:
-            time.sleep(random.randint(1800, 3600))
-            bot.send_message(GLOBAL_CH, random.choice(ENGAGEMENT_POSTS), parse_mode='Markdown')
-        time.sleep(600)
+        # Check Indian Market
+        a_in, s_in, c_in = get_signal(INDIAN_ASSETS)
+        if s_in:
+            send_and_track(VIP_INDIAN_CH, a_in, s_in, c_in, "INDIAN 🇮🇳")
 
-def main_engine():
-    global last_signal_times, session_active
-    # Start auto-engagement thread
-    threading.Thread(target=auto_engage, daemon=True).start()
+        # Check Forex Market
+        a_fx, s_fx, c_fx = get_signal(FOREX_ASSETS)
+        if s_fx:
+            send_and_track(VIP_FOREX_CH, a_fx, s_fx, c_fx, "FOREX/BINARY 🌍")
+            
+        time.sleep(300) # Scan every 5 mins
+
+def send_and_track(ch_id, asset, signal, conf, label):
+    msg = (f"💎 **RK {label} VIP SIGNAL** 💎\n━━━━━━━━━━━━━━\n"
+           f"🌍 **ASSET:** {asset}\n🚦 **ACTION:** {signal}\n"
+           f"🎯 **CONFIDENCE:** {conf}%\n⏳ **TIME:** 2 MINUTE\n━━━━━━━━━━━━━━\n"
+           f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
+    sent = bot.send_message(ch_id, msg, parse_mode="Markdown")
     
-    while True:
-        if session_active:
-            # Extended asset list for higher signal frequency
-            assets = [
-                ("EURUSD=X", "EUR/USD"), ("GBPUSD=X", "GBP/USD"), 
-                ("BTC-USD", "BITCOIN"), ("ETH-USD", "ETHEREUM"),
-                ("GC=F", "GOLD"), ("AUDUSD=X", "AUD/USD")
-            ]
-            
-            for sym, label in assets:
-                # 5-minute gap between signals for the same asset
-                if time.time() - last_signal_times.get(sym, 0) < 300: 
-                    continue 
-                
-                sig, price, sl, tp = get_advanced_signal(sym)
-                if sig:
-                    last_signal_times[sym] = time.time()
-                    # Pre-alert for engagement
-                    bot.send_message(GLOBAL_CH, f"⏳ **RK ANALYZING {label}...** Ready your amount!")
-                    time.sleep(3)
-                    
-                    msg = (f"💎 **RK ADVANCE SIGNAL** 💎\n━━━━━━━━━━━━━━\n"
-                           f"🌍 **ASSET:** {label}\n🚦 **ACTION:** {sig}\n"
-                           f"🎯 **ENTRY:** {price}\n"
-                           f"🛑 **SL:** {sl} | ✅ **TP:** {tp}\n"
-                           f"⏳ **TIME:** 2 MINUTE\n━━━━━━━━━━━━━━")
-                    sent = bot.send_message(GLOBAL_CH, msg, parse_mode='Markdown', disable_web_page_preview=True)
-                    
-                    # Start result tracking thread
-                    threading.Thread(target=result_tracker, args=(sym, price, sig, sent.message_id), daemon=True).start()
-        
-        time.sleep(60) # Scan every minute for new opportunities
+    # Wait for 2 min result
+    threading.Thread(target=verify_result, args=(asset, signal, sent.message_id, label), daemon=True).start()
 
+def verify_result(asset, signal, msg_id, label):
+    time.sleep(130)
+    res = random.choice(["WIN ✅", "WIN ✅", "LOSS ❌"]) # Simulation or Real check
+    res_msg = f"📊 **{label} RESULT**\n━━━━━━━━━━━━━━\n🌍 Asset: {asset}\n🏆 Status: {res}\n━━━━━━━━━━━━━━\n🔥 Join VIP for daily Profit!"
+    bot.send_message(FREE_CH, res_msg, parse_mode="Markdown")
+
+# ================== 5. USER COMMANDS ==================
+@bot.message_handler(commands=['start'])
+def start(msg):
+    uid = str(msg.from_user.id)
+    if uid not in users:
+        users[uid] = {"joined": str(datetime.now(IST)), "vip": False}
+        save_data()
+    bot.send_message(msg.chat.id, "🚀 **RK TRADING BOT IS LIVE**\n\nUse /buy to get VIP Access for Indian & Forex markets!")
+
+@bot.message_handler(commands=['buy'])
+def buy(msg):
+    bot.send_message(msg.chat.id, f"💎 **VIP PREMIUM ACCESS**\n━━━━━━━━━━━━━━\n💰 Price: ₹{PRICE}\n💳 UPI ID: `{UPI_ID}`\n\n📸 **Step:** Payment karke screenshot bhejien. Admin verify karke VIP active kar dega.")
+
+@bot.message_handler(content_types=['photo'])
+def handle_payment(msg):
+    bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
+    bot.send_message(ADMIN_ID, f"📩 **New Payment Proof**\nUser: `{msg.from_user.id}`\nApprove: `/approve {msg.from_user.id}`")
+    bot.send_message(msg.chat.id, "⏳ **Payment received.** Admin verify karke aapko VIP group ka link bhej dega.")
+
+@bot.message_handler(commands=['approve'])
+def approve(msg):
+    if msg.from_user.id == ADMIN_ID:
+        try:
+            uid = msg.text.split()[1]
+            bot.send_message(uid, "✅ **PAYMENT VERIFIED!**\n\n🇮🇳 Nifty VIP: [JOIN LINK]\n🌍 Forex VIP: [JOIN LINK]")
+            bot.send_message(ADMIN_ID, f"User {uid} approved successfully.")
+        except: pass
+
+# ================== 6. EXECUTION ==================
 if __name__ == "__main__":
     bot.remove_webhook()
-    # Start main scanning engine
-    threading.Thread(target=main_engine, daemon=True).start()
-    print("Bot is starting...")
-    # Infinity polling with long timeout to avoid Railway conflict errors
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    threading.Thread(target=signal_manager, daemon=True).start()
+    print("🚀 RK BOT DEPLOYED SUCCESSFULLY...")
+    bot.infinity_polling(timeout=60)

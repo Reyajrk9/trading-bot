@@ -1,4 +1,5 @@
 pyTelegramBotAPI
-yfinance
+yfinance --upgrade
 pandas
 pandas_ta
+pytz

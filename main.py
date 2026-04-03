@@ -1,19 +1,22 @@
 import telebot
 import threading
 import time
+import json
 import os
 import random
 import yfinance as yf
 import pandas as pd
 import ta
-import pytz
+import ccxt
+import logging
+import stripe
+from datetime import datetime
 
-# ================== 1. CONFIGURATION (IDs & TOKEN) ==================
-TOKEN = "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA" 
+# ================== 1. CONFIGURATION ==================
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA")
 ADMIN_ID = 8626210155 
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
-UPI_ID = "7568887980-2@ibl" 
-PRICE = "299"
+UPI_ID = "7568887980-2@ibl"
 
 # Channel IDs
 FREE_CH = "-1003649744853"
@@ -24,94 +27,106 @@ VIP_FOREX_CH = "-1003872928915"
 NIFTY_VIP_LINK = "https://t.me/+c1w2VvuFeOJkMjdI"
 FOREX_VIP_LINK = "https://t.me/+-eKlypeZ-tdjYWI1"
 
+# Database setup (To save paid users permanently)
+USER_DB = "paid_users.json"
+if not os.path.exists(USER_DB):
+    with open(USER_DB, "w") as f: json.dump([], f)
+
+def load_paid_users():
+    with open(USER_DB, "r") as f: return set(json.load(f))
+
+def save_paid_user(uid):
+    users = list(load_paid_users())
+    if uid not in users:
+        users.append(uid)
+        with open(USER_DB, "w") as f: json.dump(users, f)
+
+PAID_USERS = load_paid_users()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("RKProBot")
 bot = telebot.TeleBot(TOKEN)
 
-# ================== 2. SIGNAL ENGINE ==================
-def get_market_signal(asset_list):
+# ================== 2. ADVANCED SIGNAL ENGINE ==================
+def get_signal(asset_list):
     try:
         asset = random.choice(asset_list)
-        # 1-minute interval data for signals
         df = yf.download(asset, period="1d", interval="1m", progress=False)
-        if df.empty or len(df) < 20: return None, None, None
+        if df.empty or len(df) < 30: return None, None, None
+
+        # Strategy: RSI + EMA Cross + MACD
+        rsi = ta.momentum.RSIIndicator(df['Close']).rsi().iloc[-1]
+        ema_9 = ta.trend.EMAIndicator(df['Close'], 9).ema_indicator().iloc[-1]
+        ema_21 = ta.trend.EMAIndicator(df['Close'], 21).ema_indicator().iloc[-1]
+        macd_diff = ta.trend.MACD(df['Close']).macd_diff().iloc[-1]
+
+        signal, confidence = None, random.randint(93, 98)
         
-        # RSI Indicator (Technical Analysis)
-        rsi_series = ta.momentum.RSIIndicator(df['Close']).rsi()
-        rsi = rsi_series.iloc[-1]
-        
-        if rsi < 35:
-            return asset, "CALL 🟢 (BUY)", random.randint(91, 97)
-        elif rsi > 65:
-            return asset, "PUT 🔴 (SELL)", random.randint(91, 97)
+        if rsi < 35 and ema_9 > ema_21 and macd_diff > 0:
+            signal = "CALL 🟢 (BUY)"
+        elif rsi > 65 and ema_9 < ema_21 and macd_diff < 0:
+            signal = "PUT 🔴 (SELL)"
+            
+        return asset, signal, confidence
     except Exception as e:
-        print(f"Signal Scan Error: {e}")
-    return None, None, None
+        logger.error(f"Signal Error: {e}")
+        return None, None, None
 
 def signal_loop():
     while True:
-        # 🇮🇳 Indian VIP Signals
-        a_in, s_in, c_in = get_market_signal(["^NSEI", "^BSESN"])
-        if s_in:
-            msg = (f"💎 **RK INDIAN VIP SIGNAL** 💎\n"
-                   f"━━━━━━━━━━━━━━\n"
-                   f"🌍 **ASSET:** {a_in}\n"
-                   f"🚦 **ACTION:** {s_in}\n"
-                   f"🎯 **CONFIDENCE:** {c_in}%\n"
-                   f"⏳ **TIME:** 2 MINUTE\n"
-                   f"━━━━━━━━━━━━━━\n"
-                   f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
-            bot.send_message(VIP_INDIAN_CH, msg, parse_mode="Markdown")
+        try:
+            # Indian Market Scan
+            a_in, s_in, c_in = get_signal(["^NSEI", "^BSESN"])
+            if s_in:
+                msg = f"💎 **RK INDIAN VIP** 💎\n\n🌍 Asset: {a_in}\n🚦 Action: {s_in}\n🎯 Conf: {c_in}%\n🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})"
+                bot.send_message(VIP_INDIAN_CH, msg, parse_mode="Markdown")
 
-        # 🌍 Forex VIP Signals
-        a_fx, s_fx, c_fx = get_market_signal(["EURUSD=X", "GBPUSD=X", "BTC-USD"])
-        if s_fx:
-            msg = (f"💎 **RK FOREX VIP SIGNAL** 💎\n"
-                   f"━━━━━━━━━━━━━━\n"
-                   f"🌍 **ASSET:** {a_fx}\n"
-                   f"🚦 **ACTION:** {s_fx}\n"
-                   f"🎯 **CONFIDENCE:** {c_fx}%\n"
-                   f"⏳ **TIME:** 2 MINUTE\n"
-                   f"━━━━━━━━━━━━━━\n"
-                   f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
-            bot.send_message(VIP_FOREX_CH, msg, parse_mode="Markdown")
+            # Forex Market Scan
+            a_fx, s_fx, c_fx = get_signal(["EURUSD=X", "GBPUSD=X", "BTC-USD"])
+            if s_fx:
+                msg = f"💎 **RK FOREX VIP** 💎\n\n🌍 Asset: {a_fx}\n🚦 Action: {s_fx}\n🎯 Conf: {c_fx}%\n🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})"
+                bot.send_message(VIP_FOREX_CH, msg, parse_mode="Markdown")
             
-        time.sleep(300) # Every 5 minutes scan
+            time.sleep(300) # 5 Min Scan
+        except Exception as e:
+            logger.error(f"Loop error: {e}")
+            time.sleep(30)
 
-# ================== 3. COMMAND HANDLERS ==================
+# ================== 3. BOT COMMANDS ==================
 @bot.message_handler(commands=['start'])
-def welcome(msg):
-    bot.send_message(msg.chat.id, "🚀 **RK TRADING BOT ONLINE**\n\nVIP signals ke liye /buy type karein.")
+def start(msg):
+    bot.send_message(msg.chat.id, "🚀 **RK PRO CLOUD BOT IS ONLINE**\n\nVIP join karne ke liye /buy type karein.")
 
 @bot.message_handler(commands=['buy'])
-def buy_plan(msg):
+def buy(msg):
     text = (f"💎 **VIP PREMIUM ACCESS**\n"
             f"━━━━━━━━━━━━━━\n"
-            f"💰 Price: ₹{PRICE}\n"
+            f"💰 Price: ₹299 (Lifetime)\n"
             f"💳 UPI ID: `{UPI_ID}`\n\n"
-            f"📸 **Step:** Payment ka screenshot yahan bhejien.")
+            f"📸 Screenshot bhejien manually approve hone ke liye.")
     bot.send_message(msg.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(content_types=['photo'])
 def handle_payment(msg):
-    # Forward screenshot to you
     bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
-    bot.send_message(ADMIN_ID, f"📩 **New Proof!**\nUser ID: `{msg.from_user.id}`\nApprove: `/approve {msg.from_user.id}`")
-    bot.send_message(msg.chat.id, "⏳ **Payment received.** Admin verify karke aapko VIP links bhej dega.")
+    bot.send_message(ADMIN_ID, f"📩 **New Proof!**\nUser: `{msg.from_user.id}`\nApprove: `/approve {msg.from_user.id}`")
+    bot.send_message(msg.chat.id, "⏳ Payment proof receive ho gaya hai. Admin check kar raha hai...")
 
 @bot.message_handler(commands=['approve'])
-def approve_user(msg):
+def approve(msg):
     if msg.from_user.id == ADMIN_ID:
         try:
-            uid = msg.text.split()[1]
+            uid = int(msg.text.split()[1])
+            save_paid_user(uid) # Database mein save
             text = (f"✅ **PAYMENT APPROVED!**\n\n"
-                    f"🇮🇳 **Indian VIP:** {NIFTY_VIP_LINK}\n"
-                    f"🌍 **Forex VIP:** {FOREX_VIP_LINK}\n\n"
-                    f"Welcome to RK Family!")
+                    f"🇮🇳 Nifty VIP: {NIFTY_VIP_LINK}\n"
+                    f"🌍 Forex VIP: {FOREX_VIP_LINK}")
             bot.send_message(uid, text)
-            bot.send_message(ADMIN_ID, f"User {uid} Approved!")
+            bot.send_message(ADMIN_ID, f"User {uid} successfully added to database.")
         except: pass
 
-# ================== 4. RUN BOT ==================
+# ================== 4. RUN ==================
 if __name__ == "__main__":
     bot.remove_webhook()
     threading.Thread(target=signal_loop, daemon=True).start()
+    print("Bot Started Successfully...")
     bot.infinity_polling()

@@ -7,88 +7,101 @@ import yfinance as yf
 import ta
 import pytz
 
-# --- CONFIGURATION ---
-TOKEN = "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA" # Aapka naya token
-ADMIN_ID = 8626210155 # Aapki Admin ID
+# ================== 1. CONFIGURATION (IDs & TOKEN) ==================
+TOKEN = "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA" #
+ADMIN_ID = 8626210155 #
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
-UPI_ID = "7568887980-2@ibl" # Aapki UPI ID
+UPI_ID = "7568887980-2@ibl" #
 PRICE = "299"
 
-# --- CHANNEL IDs ---
-FREE_CH = "-1003649744853" # Public Free Channel
-VIP_INDIAN_CH = "-1003786564773" # Private Nifty VIP
-VIP_FOREX_CH = "-1003872928915" # Private Forex VIP
+# Channel IDs
+FREE_CH = "-1003649744853"
+VIP_INDIAN_CH = "-1003786564773"
+VIP_FOREX_CH = "-1003872928915"
 
-# --- PRIVATE INVITE LINKS ---
-NIFTY_VIP_LINK = "https://t.me/+c1w2VvuFeOJkMjdI" #
-FOREX_VIP_LINK = "https://t.me/+-eKlypeZ-tdjYWI1" #
+# Private Invite Links
+NIFTY_VIP_LINK = "https://t.me/+c1w2VvuFeOJkMjdI"
+FOREX_VIP_LINK = "https://t.me/+-eKlypeZ-tdjYWI1"
 
 bot = telebot.TeleBot(TOKEN)
 
-# Signal Logic
+# ================== 2. SIGNAL ENGINE ==================
 def get_market_signal(asset_list):
     try:
         asset = random.choice(asset_list)
         df = yf.download(asset, period="1d", interval="1m", progress=False)
         if df.empty or len(df) < 20: return None, None, None
+        
         rsi = ta.momentum.RSIIndicator(df['Close']).rsi().iloc[-1]
-        if rsi < 35: return asset, "CALL 🟢 (BUY)", random.randint(91, 97)
-        elif rsi > 65: return asset, "PUT 🔴 (SELL)", random.randint(91, 97)
+        
+        if rsi < 35:
+            return asset, "CALL 🟢 (BUY)", random.randint(91, 97)
+        elif rsi > 65:
+            return asset, "PUT 🔴 (SELL)", random.randint(91, 97)
     except: pass
     return None, None, None
 
 def signal_loop():
     while True:
-        # Indian Market Signals
+        # Indian Signals
         a_in, s_in, c_in = get_market_signal(["^NSEI", "^BSESN"])
         if s_in:
-            msg = f"💎 **RK INDIAN VIP** 💎\n\n🌍 ASSET: {a_in}\n🚦 ACTION: {s_in}\n🎯 CONFIDENCE: {c_in}%\n🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})"
+            msg = (f"💎 **RK INDIAN VIP SIGNAL** 💎\n"
+                   f"━━━━━━━━━━━━━━\n"
+                   f"🌍 **ASSET:** {a_in}\n"
+                   f"🚦 **ACTION:** {s_in}\n"
+                   f"🎯 **CONFIDENCE:** {c_in}%\n"
+                   f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
             bot.send_message(VIP_INDIAN_CH, msg, parse_mode="Markdown")
-        
-        # Forex/Crypto Signals
+
+        # Forex Signals
         a_fx, s_fx, c_fx = get_market_signal(["EURUSD=X", "GBPUSD=X", "BTC-USD"])
         if s_fx:
-            msg = f"💎 **RK FOREX VIP** 💎\n\n🌍 ASSET: {a_fx}\n🚦 ACTION: {s_fx}\n🎯 CONFIDENCE: {c_fx}%\n🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})"
+            msg = (f"💎 **RK FOREX VIP SIGNAL** 💎\n"
+                   f"━━━━━━━━━━━━━━\n"
+                   f"🌍 **ASSET:** {a_fx}\n"
+                   f"🚦 **ACTION:** {s_fx}\n"
+                   f"🎯 **CONFIDENCE:** {c_fx}%\n"
+                   f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
             bot.send_message(VIP_FOREX_CH, msg, parse_mode="Markdown")
             
-        time.sleep(300) # Har 5 minute mein signal
+        time.sleep(300) # Scan every 5 mins
 
-# Bot Commands
+# ================== 3. COMMAND HANDLERS ==================
 @bot.message_handler(commands=['start'])
-def start(msg):
-    bot.send_message(msg.chat.id, "🚀 **RK TRADING BOT ACTIVE**\n\nVIP signals join karne ke liye /buy command ka use karein.")
+def welcome(msg):
+    bot.send_message(msg.chat.id, "🚀 **RK TRADING BOT IS ONLINE**\n\nVIP signals ke liye /buy type karein.")
 
 @bot.message_handler(commands=['buy'])
-def buy(msg):
-    caption = f"💎 **VIP ACCESS (LIFETIME)**\n\n💰 Price: ₹{PRICE}\n💳 UPI ID: `{UPI_ID}`\n\nPayment karne ke baad screenshot yahan bhejein. Admin verify karke aapko approve karega."
-    bot.send_message(msg.chat.id, caption, parse_mode="Markdown")
+def buy_plan(msg):
+    text = (f"💎 **VIP PREMIUM ACCESS**\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"💰 Price: ₹{PRICE}\n"
+            f"💳 UPI ID: `{UPI_ID}`\n\n"
+            f"📸 **Step:** Payment karke screenshot bhejien. Admin verify karke aapko VIP links de dega.")
+    bot.send_message(msg.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(content_types=['photo'])
 def handle_payment(msg):
-    # Admin ko photo forward karna verification ke liye
     bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
-    bot.send_message(ADMIN_ID, f"📩 **NEW PAYMENT PROOF**\nUser ID: `{msg.from_user.id}`\nApprove karne ke liye click karein: `/approve {msg.from_user.id}`")
-    bot.send_message(msg.chat.id, "⏳ Aapka payment proof receive ho gaya hai. Admin verify kar raha hai...")
+    bot.send_message(ADMIN_ID, f"📩 **New Screenshot!**\nUser ID: `{msg.from_user.id}`\nApprove: `/approve {msg.from_user.id}`")
+    bot.send_message(msg.chat.id, "⏳ **Payment proof receive ho gaya hai.** Admin verify karke aapko VIP links message kar dega.")
 
 @bot.message_handler(commands=['approve'])
-def approve(msg):
+def approve_user(msg):
     if msg.from_user.id == ADMIN_ID:
         try:
-            user_to_approve = msg.text.split()[1]
-            welcome_msg = (
-                f"✅ **CONGRATULATIONS! PAYMENT APPROVED**\n\n"
-                f"Ab aap hamare VIP channels join kar sakte hain:\n\n"
-                f"🇮🇳 **Indian VIP:** {NIFTY_VIP_LINK}\n"
-                f"🌍 **Forex VIP:** {FOREX_VIP_LINK}\n\n"
-                f"Welcome to the RK Trading Family! 🚀"
-            )
-            bot.send_message(user_to_approve, welcome_msg)
-            bot.send_message(ADMIN_ID, f"✅ User {user_to_approve} ko VIP links bhej diye gaye hain.")
-        except Exception as e:
-            bot.send_message(ADMIN_ID, f"❌ Error: {e}\nFormat: `/approve USER_ID`")
+            uid = msg.text.split()[1]
+            text = (f"✅ **PAYMENT APPROVED!**\n\n"
+                    f"🇮🇳 Nifty VIP: {NIFTY_VIP_LINK}\n"
+                    f"🌍 Forex VIP: {FOREX_VIP_LINK}\n\n"
+                    f"Welcome to RK Family!")
+            bot.send_message(uid, text)
+            bot.send_message(ADMIN_ID, f"User {uid} successfully approved.")
+        except: pass
 
+# ================== 4. RUN BOT ==================
 if __name__ == "__main__":
     bot.remove_webhook()
     threading.Thread(target=signal_loop, daemon=True).start()
-    print("Bot is running...")
     bot.infinity_polling()

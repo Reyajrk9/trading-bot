@@ -3,6 +3,7 @@ import threading
 import time
 import os
 import random
+import json
 import yfinance as yf
 import pandas as pd
 import ta
@@ -12,6 +13,8 @@ from flask import Flask
 
 # ================== CONFIG ==================
 TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID"))
+
 VIP_INDIAN = os.environ.get("CHANNEL_ID_INDIAN")
 VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL")
 
@@ -19,17 +22,32 @@ QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
 
 bot = telebot.TeleBot(TOKEN)
 
-# ================== FLASK SERVER (Railway Keep Alive) ==================
+DB_FILE = "users.json"
+
+# ================== LOAD/SAVE USERS ==================
+def load_users():
+    if not os.path.exists(DB_FILE):
+        return {}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f)
+
+users = load_users()
+
+# ================== FLASK ==================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ RK BOT RUNNING"
+    return "✅ RK LEVEL 5 BOT RUNNING"
 
 def run_web():
     app.run(host="0.0.0.0", port=8080)
 
-# ================== AI ENGINE ==================
+# ================== AI ==================
 def train_and_predict(df):
     try:
         close = df['Close'].squeeze()
@@ -39,25 +57,21 @@ def train_and_predict(df):
         df['Target'] = np.where(close.shift(-1) > close, 1, 0)
 
         df = df.dropna()
-
         if len(df) < 50:
             return None, 0
 
         X = df[['RSI', 'Price_Change']]
         y = df['Target']
 
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model = RandomForestClassifier()
         model.fit(X[:-1], y[:-1])
 
-        last_row = X.tail(1)
+        pred = model.predict(X.tail(1))[0]
+        prob = model.predict_proba(X.tail(1)).max() * 100
 
-        prediction = model.predict(last_row)[0]
-        probability = model.predict_proba(last_row).max() * 100
+        return pred, prob
 
-        return prediction, probability
-
-    except Exception as e:
-        print(f"AI Error: {e}")
+    except:
         return None, 0
 
 # ================== SIGNAL ==================
@@ -70,77 +84,95 @@ def get_ai_signal(asset_list):
             return None, None, 0
 
         close = df['Close'].squeeze()
-
         pred, prob = train_and_predict(df)
-        rsi_val = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
+
+        rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
 
         signal = None
-
-        if pred == 1 and rsi_val < 48:
-            signal = "CALL 🟢 (AI BUY)"
-        elif pred == 0 and rsi_val > 52:
-            signal = "PUT 🔴 (AI SELL)"
+        if pred == 1 and rsi < 48:
+            signal = "CALL 🟢"
+        elif pred == 0 and rsi > 52:
+            signal = "PUT 🔴"
 
         return asset, signal, round(prob, 2)
 
-    except Exception as e:
-        print(f"Signal Error: {e}")
+    except:
         return None, None, 0
 
 # ================== SIGNAL LOOP ==================
 def signal_loop():
     while True:
-        try:
-            tasks = [
-                (["^NSEI", "^BSESN"], VIP_INDIAN),
-                (["EURUSD=X", "GBPUSD=X", "BTC-USD"], VIP_FOREX)
-            ]
+        for assets, ch in [
+            (["^NSEI"], VIP_INDIAN),
+            (["EURUSD=X"], VIP_FOREX)
+        ]:
+            a, s, p = get_ai_signal(assets)
 
-            for assets, ch_id in tasks:
-                a, s, p = get_ai_signal(assets)
+            if s and p > 85:
+                msg = f"🔥 VIP SIGNAL\n\n{a}\n{s}\nConfidence: {p}%"
 
-                if s and p > 85:
-                    msg = (
-                        f"🤖 *RK AI-ML PREDICTION* 🤖\n\n"
-                        f"🌍 Asset: {a}\n"
-                        f"🚦 Action: {s}\n"
-                        f"🎯 Confidence: {p}%\n"
-                        f"⚡ Strategy: AI + RSI\n\n"
-                        f"🚀 [TRADE NOW]({QUOTEX_LINK})"
-                    )
+                try:
+                    bot.send_message(ch, msg)
+                except:
+                    pass
 
-                    try:
-                        bot.send_message(ch_id, msg, parse_mode="Markdown")
-                        print(f"✅ Sent: {a} {s} {p}%")
-                    except Exception as e:
-                        print(f"Send Error: {e}")
+        time.sleep(300)
 
-            time.sleep(300)
+# ================== BOT COMMANDS ==================
 
-        except Exception as e:
-            print(f"Loop Error: {e}")
-            time.sleep(30)
+@bot.message_handler(commands=['start'])
+def start(msg):
+    uid = str(msg.chat.id)
+
+    if uid not in users:
+        users[uid] = {"vip": False}
+        save_users(users)
+
+    bot.send_message(uid,
+        "👋 Welcome!\n\n"
+        "Free signals limited.\n"
+        "VIP lene ke liye /vip likho"
+    )
+
+@bot.message_handler(commands=['vip'])
+def vip(msg):
+    bot.send_message(msg.chat.id,
+        "💰 VIP PLAN\n\n"
+        "1 Month = ₹199\n\n"
+        "UPI: yourupi@upi\n\n"
+        "Payment ke baad screenshot bhejo"
+    )
+
+# ================== PAYMENT PROOF ==================
+@bot.message_handler(content_types=['photo'])
+def payment_proof(msg):
+    uid = str(msg.chat.id)
+
+    bot.send_message(ADMIN_ID,
+        f"💰 Payment Request from {uid}",
+    )
+
+    bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
+
+    bot.send_message(uid, "⏳ Verification pending...")
+
+# ================== ADMIN APPROVE ==================
+@bot.message_handler(commands=['approve'])
+def approve(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
+
+    try:
+        uid = msg.text.split()[1]
+        users[uid]["vip"] = True
+        save_users(users)
+
+        bot.send_message(uid, "✅ VIP Activated!")
+    except:
+        bot.send_message(msg.chat.id, "❌ Error")
 
 # ================== MAIN ==================
 if __name__ == "__main__":
-    try:
-        print("🚀 RK BOT STARTED")
+    bot.remove_webhook()
 
-        # ✅ FIX 409 ERROR
-        bot.remove_webhook()
-
-        # ✅ Flask server thread
-        threading.Thread(target=run_web).start()
-
-        # ✅ Signal thread
-        threading.Thread(target=signal_loop).start()
-
-        # ✅ Stable polling
-        bot.infinity_polling(
-            timeout=30,
-            long_polling_timeout=30,
-            skip_pending=True
-        )
-
-    except Exception as e:
-        print(f"❌ Fatal Error: {e}")
+    threading.Thread(target

@@ -2,8 +2,6 @@ pyTelegramBotAPI
 yfinance
 pandas
 ta
-pytz
-ccxt
-stripe
 scikit-learn
 numpy
+flask

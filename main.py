@@ -9,7 +9,7 @@ import ta
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 
-# ================== 1. CONFIGURATION ==================
+# ================== CONFIG ==================
 TOKEN = os.environ.get("BOT_TOKEN")
 VIP_INDIAN = os.environ.get("CHANNEL_ID_INDIAN")
 VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL")
@@ -17,14 +17,17 @@ QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
 
 bot = telebot.TeleBot(TOKEN)
 
-# ================== 2. AI-ML ENGINE ==================
+# ================== AI ENGINE ==================
 def train_and_predict(df):
     try:
-        df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
-        df['Price_Change'] = df['Close'].pct_change()
-        df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
+        close = df['Close'].squeeze()
+
+        df['RSI'] = ta.momentum.RSIIndicator(close).rsi()
+        df['Price_Change'] = close.pct_change()
+        df['Target'] = np.where(close.shift(-1) > close, 1, 0)
 
         df = df.dropna()
+
         if len(df) < 50:
             return None, 0
 
@@ -35,6 +38,7 @@ def train_and_predict(df):
         model.fit(X[:-1], y[:-1])
 
         last_row = X.tail(1)
+
         prediction = model.predict(last_row)[0]
         probability = model.predict_proba(last_row).max() * 100
 
@@ -44,7 +48,7 @@ def train_and_predict(df):
         print(f"AI Error: {e}")
         return None, 0
 
-# ================== 3. SIGNAL GENERATION ==================
+# ================== SIGNAL ==================
 def get_ai_signal(asset_list):
     try:
         asset = random.choice(asset_list)
@@ -53,11 +57,14 @@ def get_ai_signal(asset_list):
         if df is None or df.empty or len(df) < 60:
             return None, None, 0
 
+        close = df['Close'].squeeze()
+
         pred, prob = train_and_predict(df)
 
-        rsi_val = ta.momentum.RSIIndicator(df['Close']).rsi().iloc[-1]
+        rsi_val = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
 
         signal = None
+
         if pred == 1 and rsi_val < 48:
             signal = "CALL 🟢 (AI BUY)"
         elif pred == 0 and rsi_val > 52:
@@ -69,7 +76,7 @@ def get_ai_signal(asset_list):
         print(f"Signal Error: {e}")
         return None, None, 0
 
-# ================== 4. SIGNAL LOOP ==================
+# ================== LOOP ==================
 def signal_loop():
     while True:
         try:
@@ -86,13 +93,14 @@ def signal_loop():
                         f"🤖 *RK AI-ML PREDICTION* 🤖\n\n"
                         f"🌍 Asset: {a}\n"
                         f"🚦 Action: {s}\n"
-                        f"🎯 AI Confidence: {p}%\n"
-                        f"⚡ Method: Random Forest ML\n\n"
+                        f"🎯 Confidence: {p}%\n"
+                        f"⚡ Strategy: AI + RSI\n\n"
                         f"🚀 [TRADE NOW]({QUOTEX_LINK})"
                     )
 
                     try:
                         bot.send_message(ch_id, msg, parse_mode="Markdown")
+                        print(f"Sent Signal: {a} {s} {p}%")
                     except Exception as e:
                         print(f"Send Error: {e}")
 
@@ -102,24 +110,25 @@ def signal_loop():
             print(f"Loop Error: {e}")
             time.sleep(30)
 
-# ================== 5. BOT RUNNER ==================
+# ================== MAIN ==================
 if __name__ == "__main__":
     try:
-        print("Starting RK AI-ML Bot...")
+        print("🚀 RK AI-ML BOT STARTED")
 
-        # Remove webhook (important for Railway)
+        # 🔥 Force clean old sessions
         bot.remove_webhook()
 
-        # Start background thread
+        # 🔥 Start background thread
         t = threading.Thread(target=signal_loop)
         t.daemon = True
         t.start()
 
-        # Strong polling (fixed)
+        # 🔥 Ultra stable polling
         bot.infinity_polling(
             timeout=30,
             long_polling_timeout=30,
-            none_stop=True
+            none_stop=True,
+            skip_pending=True
         )
 
     except Exception as e:

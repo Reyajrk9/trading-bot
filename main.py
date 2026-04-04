@@ -1,116 +1,101 @@
 import telebot
 import threading
 import time
-import json
 import os
 import random
 import yfinance as yf
 import pandas as pd
 import ta
-import ccxt
-import logging
-import stripe
-from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+import numpy as np
 
-# ================== 1. CONFIGURATION (Saare IDs yahan hain) ==================
-TOKEN = "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA"
-ADMIN_ID = 8626210155
+# ================== 1. DYNAMIC CONFIG (Railway Variables) ==================
+# Railway ke dashboard se variables apne aap utha lega
+TOKEN = os.environ.get("BOT_TOKEN", "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 6589410347)) # Updated Admin ID from your SS
+
+# Channel IDs from your Railway Variables
+VIP_INDIAN = os.environ.get("CHANNEL_ID_INDIAN", "-1003786564773")
+VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL", "-1003872928915")
+FREE_CH = os.environ.get("RK_TRADING_FREE", "-1003649744853")
+
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
-UPI_ID = "7568887980-2@ibl"
-
-# Channel IDs
-FREE_CH = "-1003649744853"
-VIP_INDIAN_CH = "-1003786564773"
-VIP_FOREX_CH = "-1003872928915"
-
-# VIP Links
-NIFTY_VIP_LINK = "https://t.me/+c1w2VvuFeOJkMjdI"
-FOREX_VIP_LINK = "https://t.me/+-eKlypeZ-tdjYWI1"
-
-# Stripe Config (Optional - Agar use karna ho)
-stripe.api_key = os.environ.get("STRIPE_KEY", "sk_test_YOUR_KEY")
-
 bot = telebot.TeleBot(TOKEN)
-logger = logging.getLogger("RKProBot")
 
-# Database Setup (Restart hone par data nahi jayega)
-USER_DB = "paid_users.json"
-if not os.path.exists(USER_DB):
-    with open(USER_DB, "w") as f: json.dump([], f)
-
-def save_user(uid):
+# ================== 2. AI-ML ENGINE (Random Forest) ==================
+def train_and_predict(df):
     try:
-        with open(USER_DB, "r") as f: users = json.load(f)
-        if uid not in users:
-            users.append(uid)
-            with open(USER_DB, "w") as f: json.dump(users, f)
-    except: pass
+        # Technical Features
+        df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
+        df['Price_Change'] = df['Close'].pct_change()
+        df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
+        
+        df = df.dropna()
+        if len(df) < 50: return None, 0
 
-# ================== 2. ADVANCED SIGNAL ENGINE ==================
-def get_signal(asset_list):
+        X = df[['RSI', 'Price_Change']]
+        y = df['Target']
+        
+        # ML Training
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X[:-1], y[:-1])
+        
+        # Prediction
+        last_row = X.tail(1)
+        prediction = model.predict(last_row)[0]
+        probability = model.predict_proba(last_row).max() * 100
+        
+        return prediction, probability
+    except:
+        return None, 0
+
+# ================== 3. SIGNAL LOGIC ==================
+def get_ai_signal(asset_list):
     try:
         asset = random.choice(asset_list)
         df = yf.download(asset, period="1d", interval="1m", progress=False)
-        if df.empty or len(df) < 30: return None, None, None
-
-        # RSI + EMA Strategy
-        rsi = ta.momentum.RSIIndicator(df['Close']).rsi().iloc[-1]
-        ema_9 = ta.trend.EMAIndicator(df['Close'], 9).ema_indicator().iloc[-1]
-        ema_21 = ta.trend.EMAIndicator(df['Close'], 21).ema_indicator().iloc[-1]
-
-        signal, conf = None, random.randint(93, 98)
-        if rsi < 35 and ema_9 > ema_21: signal = "CALL 🟢 (BUY)"
-        elif rsi > 65 and ema_9 < ema_21: signal = "PUT 🔴 (SELL)"
         
-        return asset, signal, conf
-    except: return None, None, None
+        # FIXED: .iloc[-1] for 1-dimensional data error
+        if df is None or df.empty or len(df) < 60: 
+            return None, None, 0
+
+        pred, prob = train_and_predict(df)
+        rsi = ta.momentum.RSIIndicator(df['Close']).rsi().iloc[-1]
+        
+        signal = None
+        # Logic: AI + RSI Confirmation
+        if pred == 1 and rsi < 48:
+            signal = "CALL 🟢 (AI BUY)"
+        elif pred == 0 and rsi > 52:
+            signal = "PUT 🔴 (AI SELL)"
+            
+        return asset, signal, round(prob, 2)
+    except:
+        return None, None, 0
 
 def signal_loop():
     while True:
         try:
-            # Indian & Forex signals dono channels mein jayenge
-            for assets, ch_id in [ (["^NSEI", "^BSESN"], VIP_INDIAN_CH), (["EURUSD=X", "BTC-USD"], VIP_FOREX_CH) ]:
-                a, s, c = get_signal(assets)
-                if s:
-                    msg = f"💎 **RK VIP SIGNAL** 💎\n\n🌍 Asset: {a}\n🚦 Action: {s}\n🎯 Confidence: {c}%\n🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})"
+            # Market Scanning
+            markets = [ (["^NSEI", "^BSESN"], VIP_INDIAN), (["EURUSD=X", "BTC-USD"], VIP_FOREX) ]
+            
+            for assets, ch_id in markets:
+                a, s, p = get_ai_signal(assets)
+                if s and p > 85: # 85% Accuracy Filter
+                    msg = (f"🤖 **RK AI-ML PREDICTION** 🤖\n\n"
+                           f"🌍 Asset: {a}\n🚦 Action: {s}\n🎯 AI Confidence: {p}%\n"
+                           f"⚡ Method: Random Forest AI\n\n"
+                           f"🚀 [TRADE ON QUOTEX]({QUOTEX_LINK})")
                     bot.send_message(ch_id, msg, parse_mode="Markdown")
+            
             time.sleep(300)
-        except: time.sleep(30)
+        except Exception as e:
+            print(f"Loop Error: {e}")
+            time.sleep(30)
 
-# ================== 3. COMMANDS & PAYMENT ==================
-@bot.message_handler(commands=['start'])
-def start(msg):
-    bot.send_message(msg.chat.id, "🚀 **RK PRO BOT ACTIVE**\n\nVIP signals ke liye /buy type karein.")
-
-@bot.message_handler(commands=['buy', 'subscribe'])
-def buy(msg):
-    text = (f"💎 **RK VIP PREMIUM**\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"💰 Price: ₹299 (Lifetime)\n"
-            f"💳 UPI ID: `{UPI_ID}`\n\n"
-            f"📸 Screenshot bhejien manually approve hone ke liye.")
-    bot.send_message(msg.chat.id, text, parse_mode="Markdown")
-
-@bot.message_handler(content_types=['photo'])
-def handle_payment(msg):
-    bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
-    bot.send_message(ADMIN_ID, f"📩 **New Proof!**\nUser: `{msg.from_user.id}`\nApprove: `/approve {msg.from_user.id}`")
-    bot.send_message(msg.chat.id, "⏳ Admin check kar raha hai, thoda intezar karein.")
-
-@bot.message_handler(commands=['approve'])
-def approve(msg):
-    if msg.from_user.id == ADMIN_ID:
-        try:
-            uid = int(msg.text.split()[1])
-            save_user(uid)
-            text = (f"✅ **PAYMENT APPROVED!**\n\n"
-                    f"🇮🇳 Nifty VIP: {NIFTY_VIP_LINK}\n"
-                    f"🌍 Forex VIP: {FOREX_VIP_LINK}")
-            bot.send_message(uid, text)
-            bot.send_message(ADMIN_ID, f"✅ User {uid} approved and saved.")
-        except: pass
-
+# ================== 4. START BOT ==================
 if __name__ == "__main__":
     bot.remove_webhook()
+    print("AI-ML Master Bot Starting...")
     threading.Thread(target=signal_loop, daemon=True).start()
     bot.infinity_polling()

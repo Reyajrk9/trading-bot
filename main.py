@@ -17,12 +17,16 @@ TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
 VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL")
 
+PAYMENT_LINK = "https://rzp.io/l/yourlink"
+
 bot = telebot.TeleBot(TOKEN)
 
 DB_FILE = "users.json"
 SIGNAL_FILE = "signals.json"
 
 ASSETS = ["EURUSD=X", "GBPUSD=X", "BTC-USD"]
+
+trades = []
 
 # ================= JSON =================
 def load_json(file):
@@ -43,7 +47,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "🔥 LEVEL 9 RUNNING"
+    return "🔥 LEVEL 10 RUNNING"
 
 @app.route("/dashboard")
 def dashboard():
@@ -53,18 +57,24 @@ def dashboard():
     wins = sum(1 for s in signals.values() if s["result"] == "win")
     loss = sum(1 for s in signals.values() if s["result"] == "loss")
 
-    today = str(datetime.now().date())
-    today_signals = sum(1 for s in signals.values() if today in s["time"])
-
     acc = (wins / (wins + loss) * 100) if (wins + loss) > 0 else 0
 
     return jsonify({
-        "total_users": total,
+        "users": total,
         "vip_users": vip,
         "wins": wins,
         "loss": loss,
         "accuracy": round(acc, 2),
-        "today_signals": today_signals
+        "trades": len(trades)
+    })
+
+@app.route("/pro")
+def pro():
+    revenue = sum(199 for u in users.values() if u.get("vip"))
+
+    return jsonify({
+        "revenue_est": revenue,
+        "total_trades": len(trades)
     })
 
 def run_web():
@@ -93,6 +103,16 @@ def train_and_predict(df):
 
     return pred, prob
 
+# ================= AUTO TRADE =================
+def auto_trade(asset, entry):
+    result = "win" if np.random.rand() > 0.4 else "loss"
+
+    trades.append({
+        "asset": asset,
+        "entry": entry,
+        "result": result
+    })
+
 # ================= SIGNAL =================
 def generate_signal():
     for asset in ASSETS:
@@ -117,6 +137,8 @@ def generate_signal():
         }
 
         save_json(SIGNAL_FILE, signals)
+
+        auto_trade(asset, entry)
 
         return sid, asset, entry, prob
 
@@ -170,17 +192,22 @@ def signal_loop():
 @bot.message_handler(commands=['start'])
 def start(msg):
     uid = str(msg.chat.id)
+    ref = msg.text.split()[1] if len(msg.text.split()) > 1 else None
 
     if uid not in users:
-        users[uid] = {"vip": False, "expiry": None}
+        users[uid] = {"vip": False, "expiry": None, "ref_by": ref}
         save_json(DB_FILE, users)
 
-    bot.send_message(uid, "Welcome! Use /buy to get VIP")
+        if ref and ref in users:
+            users[ref]["vip"] = True
+            users[ref]["expiry"] = str(datetime.now() + timedelta(days=3))
+
+    bot.send_message(uid, f"Welcome!\n\nReferral link:\nhttps://t.me/YOURBOT?start={uid}")
 
 @bot.message_handler(commands=['buy'])
 def buy(msg):
     bot.send_message(msg.chat.id,
-        "💰 VIP ₹199\n\nUPI ID: yourupi@upi\n\nPayment karke screenshot bhejo")
+        f"💰 VIP ₹199\n\n👉 Pay here:\n{PAYMENT_LINK}\n\nScreenshot bhejo")
 
 @bot.message_handler(content_types=['photo'])
 def payment(msg):
@@ -216,8 +243,22 @@ def vip_check():
     while True:
         for uid, data in users.items():
             if data.get("vip") and data.get("expiry"):
-                if datetime.now() > datetime.fromisoformat(data["expiry"]):
+
+                exp = datetime.fromisoformat(data["expiry"])
+                now = datetime.now()
+
+                if 0 < (exp - now).total_seconds() < 86400:
+                    try:
+                        bot.send_message(uid, "⚠️ VIP expire hone wala hai! /buy")
+                    except:
+                        pass
+
+                if now > exp:
                     data["vip"] = False
+                    try:
+                        bot.send_message(uid, "❌ VIP expired! /buy")
+                    except:
+                        pass
 
         save_json(DB_FILE, users)
         time.sleep(3600)

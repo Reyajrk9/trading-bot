@@ -6,4 +6,4 @@ pytz
 ccxt
 stripe
 scikit-learn
-numpty
+numpy

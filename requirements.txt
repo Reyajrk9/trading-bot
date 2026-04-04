@@ -5,3 +5,5 @@ ta
 scikit-learn
 numpy
 flask
+gunicorn
+requests

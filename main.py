@@ -4,50 +4,68 @@ import time
 import os
 import random
 import json
+from datetime import datetime, timedelta
+
 import yfinance as yf
 import pandas as pd
 import ta
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
-from flask import Flask
 
-# ================== CONFIG ==================
+from flask import Flask, jsonify
+
+# ================= CONFIG =================
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
 
 VIP_INDIAN = os.environ.get("CHANNEL_ID_INDIAN")
 VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL")
 
-QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
-
 bot = telebot.TeleBot(TOKEN)
 
 DB_FILE = "users.json"
+SIGNAL_FILE = "signals.json"
 
-# ================== LOAD/SAVE USERS ==================
-def load_users():
-    if not os.path.exists(DB_FILE):
+# ================= DATABASE =================
+def load_json(file):
+    if not os.path.exists(file):
         return {}
-    with open(DB_FILE, "r") as f:
+    with open(file, "r") as f:
         return json.load(f)
 
-def save_users(data):
-    with open(DB_FILE, "w") as f:
+def save_json(file, data):
+    with open(file, "w") as f:
         json.dump(data, f)
 
-users = load_users()
+users = load_json(DB_FILE)
+signals_db = load_json(SIGNAL_FILE)
 
-# ================== FLASK ==================
+# ================= FLASK =================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ RK LEVEL 5 BOT RUNNING"
+    return "🚀 LEVEL 7 BOT RUNNING"
+
+@app.route("/stats")
+def stats():
+    total = len(users)
+    vip = sum(1 for u in users.values() if u.get("vip"))
+
+    wins = sum(1 for s in signals_db.values() if s["result"] == "win")
+    loss = sum(1 for s in signals_db.values() if s["result"] == "loss")
+
+    return jsonify({
+        "users": total,
+        "vip_users": vip,
+        "wins": wins,
+        "loss": loss
+    })
 
 def run_web():
     app.run(host="0.0.0.0", port=8080)
 
-# ================== AI ==================
+# ================= AI =================
 def train_and_predict(df):
     try:
         close = df['Close'].squeeze()
@@ -74,89 +92,82 @@ def train_and_predict(df):
     except:
         return None, 0
 
-# ================== SIGNAL ==================
-def get_ai_signal(asset_list):
-    try:
-        asset = random.choice(asset_list)
-        df = yf.download(asset, period="1d", interval="1m", progress=False)
+# ================= SIGNAL =================
+def get_signal():
+    asset = "EURUSD=X"
 
-        if df is None or df.empty or len(df) < 60:
-            return None, None, 0
+    df = yf.download(asset, period="1d", interval="1m", progress=False)
 
-        close = df['Close'].squeeze()
-        pred, prob = train_and_predict(df)
+    if df is None or df.empty or len(df) < 60:
+        return None
 
-        rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
+    pred, prob = train_and_predict(df)
 
-        signal = None
-        if pred == 1 and rsi < 48:
-            signal = "CALL 🟢"
-        elif pred == 0 and rsi > 52:
-            signal = "PUT 🔴"
+    if prob < 85:
+        return None
 
-        return asset, signal, round(prob, 2)
+    signal_id = str(time.time())
 
-    except:
-        return None, None, 0
+    signals_db[signal_id] = {
+        "asset": asset,
+        "time": str(datetime.now()),
+        "result": "pending"
+    }
 
-# ================== SIGNAL LOOP ==================
+    save_json(SIGNAL_FILE, signals_db)
+
+    return signal_id, asset, prob
+
+# ================= TRACK RESULT =================
+def check_results():
+    while True:
+        for sid, data in signals_db.items():
+            if data["result"] == "pending":
+                # Fake result (demo)
+                data["result"] = random.choice(["win", "loss"])
+
+        save_json(SIGNAL_FILE, signals_db)
+        time.sleep(600)
+
+# ================= SIGNAL LOOP =================
 def signal_loop():
     while True:
-        for assets, ch in [
-            (["^NSEI"], VIP_INDIAN),
-            (["EURUSD=X"], VIP_FOREX)
-        ]:
-            a, s, p = get_ai_signal(assets)
+        sig = get_signal()
 
-            if s and p > 85:
-                msg = f"🔥 VIP SIGNAL\n\n{a}\n{s}\nConfidence: {p}%"
+        if sig:
+            sid, asset, prob = sig
 
-                try:
-                    bot.send_message(ch, msg)
-                except:
-                    pass
+            msg = f"🔥 VIP SIGNAL\n{asset}\nConfidence: {prob}%"
+
+            try:
+                bot.send_message(VIP_FOREX, msg)
+            except:
+                pass
 
         time.sleep(300)
 
-# ================== BOT COMMANDS ==================
-
+# ================= BOT =================
 @bot.message_handler(commands=['start'])
 def start(msg):
     uid = str(msg.chat.id)
 
     if uid not in users:
-        users[uid] = {"vip": False}
-        save_users(users)
+        users[uid] = {"vip": False, "expiry": None}
+        save_json(DB_FILE, users)
 
-    bot.send_message(uid,
-        "👋 Welcome!\n\n"
-        "Free signals limited.\n"
-        "VIP lene ke liye /vip likho"
-    )
+    bot.send_message(uid, "Welcome!\nUse /vip to buy VIP")
 
 @bot.message_handler(commands=['vip'])
 def vip(msg):
     bot.send_message(msg.chat.id,
-        "💰 VIP PLAN\n\n"
-        "1 Month = ₹199\n\n"
-        "UPI: yourupi@upi\n\n"
-        "Payment ke baad screenshot bhejo"
+        "VIP ₹199/month\nUPI: yourupi@upi\nSend screenshot"
     )
 
-# ================== PAYMENT PROOF ==================
 @bot.message_handler(content_types=['photo'])
-def payment_proof(msg):
-    uid = str(msg.chat.id)
-
-    bot.send_message(ADMIN_ID,
-        f"💰 Payment Request from {uid}",
-    )
-
+def payment(msg):
     bot.forward_message(ADMIN_ID, msg.chat.id, msg.message_id)
+    bot.send_message(msg.chat.id, "⏳ Waiting for approval")
 
-    bot.send_message(uid, "⏳ Verification pending...")
-
-# ================== ADMIN APPROVE ==================
 @bot.message_handler(commands=['approve'])
 def approve(msg):
     if msg.chat.id != ADMIN_ID:
@@ -164,15 +175,34 @@ def approve(msg):
 
     try:
         uid = msg.text.split()[1]
+
         users[uid]["vip"] = True
-        save_users(users)
+        users[uid]["expiry"] = str(datetime.now() + timedelta(days=30))
 
-        bot.send_message(uid, "✅ VIP Activated!")
+        save_json(DB_FILE, users)
+
+        bot.send_message(uid, "✅ VIP Activated 30 Days")
     except:
-        bot.send_message(msg.chat.id, "❌ Error")
+        bot.send_message(msg.chat.id, "Error")
 
-# ================== MAIN ==================
+# ================= VIP CHECK =================
+def vip_expiry_check():
+    while True:
+        for uid, data in users.items():
+            if data.get("vip") and data.get("expiry"):
+                if datetime.now() > datetime.fromisoformat(data["expiry"]):
+                    data["vip"] = False
+
+        save_json(DB_FILE, users)
+        time.sleep(3600)
+
+# ================= MAIN =================
 if __name__ == "__main__":
     bot.remove_webhook()
 
-    threading.Thread(target
+    threading.Thread(target=run_web).start()
+    threading.Thread(target=signal_loop).start()
+    threading.Thread(target=check_results).start()
+    threading.Thread(target=vip_expiry_check).start()
+
+    bot.infinity_polling()

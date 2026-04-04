@@ -5,3 +5,5 @@ ta
 pytz
 ccxt
 stripe
+scikit-learn
+numpty

@@ -11,7 +11,7 @@ import numpy as np
 
 # ================== 1. DYNAMIC CONFIG (Railway Variables) ==================
 # Railway ke dashboard se variables apne aap utha lega
-TOKEN = os.environ.get("BOT_TOKEN", "8626210155:AAFreO1PvBOs8I3I4vmhzQXVX4jN2cG-TKA")
+TOKEN = os.environ.get("BOT_TOKEN", "8626210155:AAE4RGk8cGaFwrFLsIIkASez9mVMH-1lxEM")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 6589410347)) # Updated Admin ID from your SS
 
 # Channel IDs from your Railway Variables

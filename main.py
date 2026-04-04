@@ -3,45 +3,33 @@ import threading
 import time
 import os
 import random
-import json
 import yfinance as yf
 import pandas as pd
 import ta
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
-from flask import Flask, request
+from flask import Flask
 
 # ================== CONFIG ==================
 TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID"))
-
 VIP_INDIAN = os.environ.get("CHANNEL_ID_INDIAN")
 VIP_FOREX = os.environ.get("CHANNEL_ID_GLOBAL")
-FREE_CHANNEL = os.environ.get("RK_TRADING_FREE")
 
 QUOTEX_LINK = "https://broker-qx.pro/?lid=2061690"
 
-WEBHOOK_URL = os.environ.get("RAILWAY_STATIC_URL") + "/" + TOKEN
-
 bot = telebot.TeleBot(TOKEN)
+
+# ================== FLASK SERVER (Railway Keep Alive) ==================
 app = Flask(__name__)
 
-DATA_FILE = "data.json"
+@app.route("/")
+def home():
+    return "✅ RK BOT RUNNING"
 
-# ================== DATA ==================
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"vip": [], "signals": [], "referrals": {}, "balance": {}}
-    with open(DATA_FILE) as f:
-        return json.load(f)
+def run_web():
+    app.run(host="0.0.0.0", port=8080)
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
-data = load_data()
-
-# ================== AI ==================
+# ================== AI ENGINE ==================
 def train_and_predict(df):
     try:
         close = df['Close'].squeeze()
@@ -58,15 +46,18 @@ def train_and_predict(df):
         X = df[['RSI', 'Price_Change']]
         y = df['Target']
 
-        model = RandomForestClassifier(n_estimators=100)
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X[:-1], y[:-1])
 
-        pred = model.predict(X.tail(1))[0]
-        prob = model.predict_proba(X.tail(1)).max() * 100
+        last_row = X.tail(1)
 
-        return pred, prob
+        prediction = model.predict(last_row)[0]
+        probability = model.predict_proba(last_row).max() * 100
 
-    except:
+        return prediction, probability
+
+    except Exception as e:
+        print(f"AI Error: {e}")
         return None, 0
 
 # ================== SIGNAL ==================
@@ -79,20 +70,21 @@ def get_ai_signal(asset_list):
             return None, None, 0
 
         close = df['Close'].squeeze()
-        pred, prob = train_and_predict(df)
 
-        rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
+        pred, prob = train_and_predict(df)
+        rsi_val = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
 
         signal = None
 
-        if pred == 1 and rsi < 48:
-            signal = "CALL 🟢"
-        elif pred == 0 and rsi > 52:
-            signal = "PUT 🔴"
+        if pred == 1 and rsi_val < 48:
+            signal = "CALL 🟢 (AI BUY)"
+        elif pred == 0 and rsi_val > 52:
+            signal = "PUT 🔴 (AI SELL)"
 
         return asset, signal, round(prob, 2)
 
-    except:
+    except Exception as e:
+        print(f"Signal Error: {e}")
         return None, None, 0
 
 # ================== SIGNAL LOOP ==================
@@ -107,110 +99,48 @@ def signal_loop():
             for assets, ch_id in tasks:
                 a, s, p = get_ai_signal(assets)
 
-                if s and p > 80:
-                    msg = f"📊 {a}\n🚦 {s}\n🎯 {p}%\n\n🚀 Trade: {QUOTEX_LINK}"
+                if s and p > 85:
+                    msg = (
+                        f"🤖 *RK AI-ML PREDICTION* 🤖\n\n"
+                        f"🌍 Asset: {a}\n"
+                        f"🚦 Action: {s}\n"
+                        f"🎯 Confidence: {p}%\n"
+                        f"⚡ Strategy: AI + RSI\n\n"
+                        f"🚀 [TRADE NOW]({QUOTEX_LINK})"
+                    )
 
-                    # save signal
-                    data["signals"].append({
-                        "asset": a,
-                        "signal": s,
-                        "time": time.time()
-                    })
-                    save_data(data)
-
-                    # VIP channels
                     try:
-                        bot.send_message(ch_id, msg)
-                    except:
-                        pass
-
-                    # FREE channel (low confidence)
-                    try:
-                        if p < 85:
-                            bot.send_message(FREE_CHANNEL, f"FREE SIGNAL ⚠️\n{a} {s}")
-                    except:
-                        pass
+                        bot.send_message(ch_id, msg, parse_mode="Markdown")
+                        print(f"✅ Sent: {a} {s} {p}%")
+                    except Exception as e:
+                        print(f"Send Error: {e}")
 
             time.sleep(300)
 
-        except:
+        except Exception as e:
+            print(f"Loop Error: {e}")
             time.sleep(30)
 
-# ================== RESULT TRACK ==================
-def result_tracker():
-    while True:
-        for s in data["signals"]:
-            if "result" in s:
-                continue
-
-            if time.time() - s["time"] < 300:
-                continue
-
-            try:
-                df = yf.download(s["asset"], period="1d", interval="1m", progress=False)
-                close = df['Close'].squeeze()
-
-                entry = close.iloc[-6]
-                exit = close.iloc[-1]
-
-                if "CALL" in s["signal"]:
-                    s["result"] = "WIN" if exit > entry else "LOSS"
-                else:
-                    s["result"] = "WIN" if exit < entry else "LOSS"
-
-            except:
-                continue
-
-        save_data(data)
-        time.sleep(60)
-
-# ================== TELEGRAM ==================
-@bot.message_handler(commands=['start'])
-def start(msg):
-    bot.reply_to(msg,
-        "🚀 Welcome\n\nFree signals: Join channel\nVIP ke liye /buy"
-    )
-
-@bot.message_handler(commands=['buy'])
-def buy(msg):
-    bot.reply_to(msg,
-        "💰 VIP Buy:\nUPI: yourupi@pay\nSend screenshot to admin"
-    )
-
-@bot.message_handler(commands=['approve'])
-def approve(msg):
-    if msg.from_user.id != ADMIN_ID:
-        return
-
-    try:
-        uid = msg.text.split()[1]
-        data["vip"].append(uid)
-        save_data(data)
-
-        bot.send_message(uid, "✅ VIP Activated")
-        bot.reply_to(msg, "Done")
-
-    except:
-        bot.reply_to(msg, "Error")
-
-# ================== WEBHOOK ==================
-@app.route('/' + TOKEN, methods=['POST'])
-def webhook():
-    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
-    return "ok"
-
-@app.route("/")
-def home():
-    return "Bot Running"
-
-# ================== START ==================
+# ================== MAIN ==================
 if __name__ == "__main__":
-    print("🚀 FINAL PRO BOT RUNNING")
+    try:
+        print("🚀 RK BOT STARTED")
 
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
+        # ✅ FIX 409 ERROR
+        bot.remove_webhook()
 
-    threading.Thread(target=signal_loop, daemon=True).start()
-    threading.Thread(target=result_tracker, daemon=True).start()
+        # ✅ Flask server thread
+        threading.Thread(target=run_web).start()
 
-    app.run(host="0.0.0.0", port=8000)
+        # ✅ Signal thread
+        threading.Thread(target=signal_loop).start()
+
+        # ✅ Stable polling
+        bot.infinity_polling(
+            timeout=30,
+            long_polling_timeout=30,
+            skip_pending=True
+        )
+
+    except Exception as e:
+        print(f"❌ Fatal Error: {e}")

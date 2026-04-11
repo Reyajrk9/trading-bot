@@ -1,0 +1,6 @@
+# Python standard ignores
+__pycache__/
+*.pyc
+*.json
+.env
+venv/
